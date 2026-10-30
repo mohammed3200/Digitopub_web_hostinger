@@ -22,6 +22,10 @@ import {
     getIdentity,
     invalidateRevocationCache,
 } from "@/src/lib/identity-cookie"
+import { previewPersonUpdate } from "@/src/lib/ojs-write-guard"
+import { confirmEmailSchema, selfPersonEditSchema } from "@/src/features/author-profile/schemas/person-edit"
+import { applyPersonEdit, messageForCode, resolveSelfEmail, statusForCode } from "@/src/features/author-profile/server/service"
+import { confirmEmailChange } from "@/src/features/author-profile/server/email-change"
 
 const app = new Hono()
 
@@ -203,6 +207,63 @@ app.post("/notifications/subscribe", zValidator("json", accountSubscribeSchema),
         console.error("[Notifications] account subscribe failed:", e instanceof Error ? e.message : e)
     }
     return generic
+})
+
+// ─── Author profile self-service (#233) ───────────────────────────────
+
+const PROFILE_EDIT_RATE_LIMIT = { maxRequests: 5, windowMs: 60 * 60 * 1000, keyPrefix: "profile:edit:orcid" }
+const CONFIRM_EMAIL_RATE_LIMIT = { maxRequests: 20, windowMs: 60 * 60 * 1000, keyPrefix: "profile:confirm:ip" }
+
+/** The signed-in author's record in OJS (names, email, ORCID iD, counts). */
+app.get("/profile", async (c) => {
+    const identity = await getIdentity(c.req.raw.headers)
+    if (!identity) return err("UNAUTHENTICATED", 401, "Sign in with ORCID.")
+    const me = await resolveSelfEmail(identity)
+    if (!me.ok) return err("NO_RECORD", me.status, me.error)
+    const result = await previewPersonUpdate(me.email)
+    if (!result.success) return err(result.code.toUpperCase(), statusForCode(result.code), messageForCode(result.code))
+    const { success: _s, auditId: _a, ...data } = result
+    return c.json({ success: true, data: { ...data, signedInOrcid: identity.orcid } })
+})
+
+/** Edit one's own names/email; the ORCID iD can only be set to the signed-in one. */
+app.post("/profile", zValidator("json", selfPersonEditSchema), async (c) => {
+    const identity = await getIdentity(c.req.raw.headers)
+    if (!identity) return err("UNAUTHENTICATED", 401, "Sign in with ORCID.")
+    if (!checkRateLimit(identity.orcid, PROFILE_EDIT_RATE_LIMIT).allowed) {
+        return err("RATE_LIMITED", 429, "Too many changes. Please try again later.")
+    }
+    const me = await resolveSelfEmail(identity)
+    if (!me.ok) return err("NO_RECORD", me.status, me.error)
+
+    const { linkOrcid, ...changes } = c.req.valid("json")
+    const outcome = await applyPersonEdit({
+        matchEmail: me.email,
+        changes: { ...changes, ...(linkOrcid ? { orcid: identity.orcid } : {}) },
+        actor: { orcid: identity.orcid },
+    })
+    if (!outcome.ok) return err(outcome.code.toUpperCase(), outcome.status, outcome.error)
+    return c.json({ success: true, data: { applied: outcome.applied, confirmationSentTo: outcome.confirmationSentTo } })
+})
+
+/** Confirmation link for a new email; works without signing in (the token is the proof). */
+app.post("/confirm-email", zValidator("json", confirmEmailSchema), async (c) => {
+    if (!checkRateLimit(clientIpFromHeaders(c.req.raw.headers), CONFIRM_EMAIL_RATE_LIMIT).allowed) {
+        return err("RATE_LIMITED", 429, "Too many requests. Please try again later.")
+    }
+    const result = await confirmEmailChange(c.req.valid("json").token)
+    switch (result.status) {
+        case "confirmed":
+            return c.json({ success: true, data: { email: result.newEmail } })
+        case "invalid":
+            return err("INVALID_LINK", 400, "This confirmation link is not valid.")
+        case "expired":
+            return err("EXPIRED_LINK", 410, "This confirmation link has expired. Ask for the change again.")
+        case "used":
+            return err("USED_LINK", 409, "This confirmation link was already used.")
+        case "failed":
+            return err(result.code.toUpperCase(), statusForCode(result.code), messageForCode(result.code))
+    }
 })
 
 export { app as accountRouter }
