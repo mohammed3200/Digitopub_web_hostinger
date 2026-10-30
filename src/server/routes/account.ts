@@ -126,6 +126,10 @@ app.delete("/data", async (c) => {
                 ],
             },
         })
+        // Pending author email changes this ORCID iD asked for (#233).
+        const emailChangeRows = await tx.personEmailChange.deleteMany({
+            where: { requested_by_orcid: identity.orcid },
+        })
         await tx.revokedOrcid.upsert({
             where: { orcid: identity.orcid },
             create: { orcid: identity.orcid, cookie_iat_min: now },
@@ -136,6 +140,7 @@ app.delete("/data", async (c) => {
             user_metrics_rows: userMetricsRows.count,
             user_orcid_links_rows: linkRows.count,
             notification_subscriber_rows: subscriberRows.count,
+            person_email_change_rows: emailChangeRows.count,
         }
     })
 

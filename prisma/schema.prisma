@@ -995,3 +995,29 @@ model ArticleCitationCount {
   @@index([checked_at])
   @@map("article_citation_counts")
 }
+
+/// Pending author email changes (#233). An admin or the author asks for a
+/// new address; nothing is written to OJS until the new address opens the
+/// emailed link. Only the link token's SHA-256 is stored. Rows are deleted
+/// 30 days after creation, and by DELETE /api/account/data for the ORCID iD
+/// that asked.
+model PersonEmailChange {
+  id                    BigInt    @id @default(autoincrement())
+  token_hash            String    @unique @db.Char(64)
+  /// The person's current OJS email (account and/or bylines).
+  old_email             String    @db.VarChar(255)
+  /// OJS authors.email is varchar(90).
+  new_email             String    @db.VarChar(90)
+  requested_by_admin_id BigInt?
+  requested_by_orcid    String?   @db.VarChar(19)
+  expires_at            DateTime
+  /// Set when the link is used; the OJS write happens right after.
+  confirmed_at          DateTime?
+  /// Why the OJS write failed after confirmation, if it did.
+  error                 String?   @db.VarChar(255)
+  created_at            DateTime  @default(now())
+
+  @@index([old_email])
+  @@index([created_at])
+  @@map("person_email_changes")
+}
