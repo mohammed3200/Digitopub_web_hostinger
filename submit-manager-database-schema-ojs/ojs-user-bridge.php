@@ -99,6 +99,11 @@ if ($action === 'set_journal_specialization') {
     exit;
 }
 
+if ($action === 'update_person') {
+    bridgeUpdatePerson(bridgeConnect($config), $payload);
+    exit;
+}
+
 if ($action !== 'provision_user') {
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => 'Unknown action']);
@@ -460,4 +465,309 @@ function bridgeSetJournalSpecialization(PDO $pdo, array $payload): void
         'before' => $before,
         'after' => $value === '' ? null : $value,
     ], JSON_INVALID_UTF8_SUBSTITUTE);
+}
+
+// --- ACTION: update_person (#233) ---
+
+/**
+ * Edit one person's name, email and ORCID iD everywhere OJS stores them: the
+ * account (users / user_settings), if there is one, and every publication
+ * byline (authors / author_settings) with the same email. The person is the
+ * email, compared case-insensitively (the columns are *_general_ci).
+ *
+ * Payload: {"action":"update_person","match_email":"a@x.org",
+ *           "givenName"?:"…","familyName"?:"…","email"?:"b@x.org",
+ *           "orcid"?:"0000-0002-1825-0097"|null,"dry_run"?:true}
+ * Answer:  {"success":true,"dry_run":false,"account":{"user_id":7}|null,
+ *           "bylines":3,"publications":2,"changed_publications":2,
+ *           "dois_marked_stale":1,"before":{…},"after":{…},"warnings":[]}
+ *
+ * One transaction. An email or ORCID iD that already belongs to someone else
+ * is refused (409), never merged. Publication DOIs whose byline changed are
+ * marked stale (status 2/3 -> 5), as OJS's own DoiDAO::markStale does, so
+ * Crossref gets the new metadata. dry_run does all of it, then rolls back.
+ */
+function bridgeUpdatePerson(PDO $pdo, array $payload): void
+{
+    $fail = function (int $status, string $error, ?string $code = null): void {
+        http_response_code($status);
+        echo json_encode(['success' => false, 'error' => $error, 'code' => $code]);
+    };
+
+    $matchEmail = is_string($payload['match_email'] ?? null) ? trim($payload['match_email']) : '';
+    if ($matchEmail === '' || !filter_var($matchEmail, FILTER_VALIDATE_EMAIL)) {
+        $fail(400, 'match_email must be a valid email address', 'invalid_input');
+        return;
+    }
+    $dryRun = ($payload['dry_run'] ?? false) === true;
+
+    $changes = [];
+    foreach (['givenName', 'familyName'] as $field) {
+        if (!array_key_exists($field, $payload)) {
+            continue;
+        }
+        $value = is_string($payload[$field]) ? trim($payload[$field]) : null;
+        // Settings tables are utf8mb3: no 4-byte characters. No control characters.
+        // preg_match returns false on invalid UTF-8, which is refused too.
+        if ($value === null || mb_strlen($value) > 255
+            || preg_match('/[\x{10000}-\x{10FFFF}]|\p{Cc}/u', $value) !== 0
+            || ($field === 'givenName' && $value === '')) {
+            $fail(400, "{$field} must be 1-255 plain characters", 'invalid_input');
+            return;
+        }
+        $changes[$field] = $value;
+    }
+    if (array_key_exists('email', $payload)) {
+        $email = is_string($payload['email']) ? trim($payload['email']) : '';
+        // authors.email is varchar(90), shorter than users.email (255).
+        if ($email === '' || strlen($email) > 90 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $fail(400, 'email must be a valid email address of at most 90 characters', 'invalid_input');
+            return;
+        }
+        $changes['email'] = $email;
+    }
+    if (array_key_exists('orcid', $payload)) {
+        $raw = $payload['orcid'];
+        if ($raw === null || $raw === '') {
+            $changes['orcid'] = null;
+        } else {
+            $orcid = is_string($raw) ? bridgeNormalizeOrcid($raw) : null;
+            if ($orcid === null) {
+                $fail(400, 'orcid must be a valid ORCID iD', 'invalid_orcid');
+                return;
+            }
+            $changes['orcid'] = $orcid;
+        }
+    }
+    if (!$changes && !$dryRun) {
+        $fail(400, 'Nothing to change', 'invalid_input');
+        return;
+    }
+
+    $names = ['givenName', 'familyName', 'orcid', 'preferredPublicName'];
+    $in = implode(',', array_fill(0, count($names), '?'));
+
+    try {
+        $pdo->beginTransaction();
+
+        $stmt = $pdo->prepare('SELECT user_id, email FROM users WHERE email = ? FOR UPDATE');
+        $stmt->execute([$matchEmail]);
+        $account = $stmt->fetch() ?: null;
+
+        $stmt = $pdo->prepare('SELECT author_id, publication_id, email FROM authors WHERE email = ? ORDER BY author_id FOR UPDATE');
+        $stmt->execute([$matchEmail]);
+        $bylines = $stmt->fetchAll();
+
+        if (!$account && !$bylines) {
+            $pdo->rollBack();
+            $fail(404, 'No OJS account or byline has this email', 'not_found');
+            return;
+        }
+
+        // Current settings, as [id][setting_name][locale] => value.
+        $accountSettings = [];
+        if ($account) {
+            $stmt = $pdo->prepare("SELECT setting_name, locale, setting_value FROM user_settings WHERE user_id = ? AND setting_name IN ($in) FOR UPDATE");
+            $stmt->execute(array_merge([(int)$account['user_id']], $names));
+            foreach ($stmt->fetchAll() as $r) {
+                $accountSettings[$r['setting_name']][$r['locale']] = $r['setting_value'];
+            }
+        }
+        $bylineSettings = [];
+        if ($bylines) {
+            $ids = array_map(fn ($b) => (int)$b['author_id'], $bylines);
+            $idIn = implode(',', array_fill(0, count($ids), '?'));
+            $stmt = $pdo->prepare("SELECT author_id, setting_name, locale, setting_value FROM author_settings WHERE author_id IN ($idIn) AND setting_name IN ($in) FOR UPDATE");
+            $stmt->execute(array_merge($ids, $names));
+            foreach ($stmt->fetchAll() as $r) {
+                $bylineSettings[(int)$r['author_id']][$r['setting_name']][$r['locale']] = $r['setting_value'];
+            }
+        }
+
+        // "before" describes the account when there is one, else the first byline.
+        $source = $account ? $accountSettings : $bylineSettings[(int)$bylines[0]['author_id']] ?? [];
+        $before = [
+            'givenName' => bridgeFirstValue($source['givenName'] ?? []),
+            'familyName' => bridgeFirstValue($source['familyName'] ?? []),
+            'email' => $account ? $account['email'] : $bylines[0]['email'],
+            'orcid' => bridgeFirstValue($source['orcid'] ?? []),
+        ];
+        $after = array_merge($before, $changes);
+
+        // Refuse an email or ORCID iD that already belongs to a different person.
+        if (isset($changes['email']) && strcasecmp($changes['email'], $matchEmail) !== 0) {
+            $stmt = $pdo->prepare('SELECT (SELECT COUNT(*) FROM users WHERE email = ?) + (SELECT COUNT(*) FROM authors WHERE email = ?) AS n');
+            $stmt->execute([$changes['email'], $changes['email']]);
+            if ((int)$stmt->fetch()['n'] > 0) {
+                $pdo->rollBack();
+                $fail(409, 'This email already belongs to another OJS account or author', 'email_in_use');
+                return;
+            }
+        }
+        if (!empty($changes['orcid'])) {
+            $stmt = $pdo->prepare("SELECT
+                (SELECT COUNT(*) FROM author_settings s JOIN authors a ON a.author_id = s.author_id
+                  WHERE s.setting_name = 'orcid' AND s.setting_value = ? AND a.email <> ?)
+              + (SELECT COUNT(*) FROM user_settings s JOIN users u ON u.user_id = s.user_id
+                  WHERE s.setting_name = 'orcid' AND s.setting_value = ? AND u.email <> ?) AS n");
+            $stmt->execute([$changes['orcid'], $matchEmail, $changes['orcid'], $matchEmail]);
+            if ((int)$stmt->fetch()['n'] > 0) {
+                $pdo->rollBack();
+                $fail(409, 'This ORCID iD already belongs to another OJS account or author', 'orcid_in_use');
+                return;
+            }
+        }
+
+        $warnings = [];
+        $publicNames = 0;
+
+        if ($account) {
+            $userId = (int)$account['user_id'];
+            if (isset($changes['email']) && $changes['email'] !== $account['email']) {
+                $pdo->prepare('UPDATE users SET email = ? WHERE user_id = ?')->execute([$changes['email'], $userId]);
+            }
+            bridgeApplySettings($pdo, 'user_settings', 'user_id', $userId, $accountSettings, $changes);
+            if (bridgeFirstValue($accountSettings['preferredPublicName'] ?? []) !== null) {
+                $publicNames++;
+            }
+        }
+
+        $changedPublications = [];
+        foreach ($bylines as $b) {
+            $authorId = (int)$b['author_id'];
+            $settings = $bylineSettings[$authorId] ?? [];
+            $changed = false;
+            if (isset($changes['email']) && $changes['email'] !== $b['email']) {
+                $pdo->prepare('UPDATE authors SET email = ? WHERE author_id = ?')->execute([$changes['email'], $authorId]);
+                $changed = true;
+            }
+            $changed = bridgeApplySettings($pdo, 'author_settings', 'author_id', $authorId, $settings, $changes) || $changed;
+            if ($changed) {
+                $changedPublications[(int)$b['publication_id']] = true;
+            }
+            if (bridgeFirstValue($settings['preferredPublicName'] ?? []) !== null) {
+                $publicNames++;
+            }
+        }
+        if ($publicNames > 0 && (isset($changes['givenName']) || isset($changes['familyName']))) {
+            $warnings[] = "A preferred public name is set on {$publicNames} record(s); OJS shows it instead of the given/family name.";
+        }
+
+        $staleDois = 0;
+        if ($changedPublications) {
+            $pubIds = array_keys($changedPublications);
+            $pubIn = implode(',', array_fill(0, count($pubIds), '?'));
+            // Doi::STATUS_SUBMITTED (2) / STATUS_REGISTERED (3) -> STATUS_STALE (5).
+            $stmt = $pdo->prepare("UPDATE dois d JOIN publications p ON p.doi_id = d.doi_id
+                                   SET d.status = 5 WHERE p.publication_id IN ($pubIn) AND d.status IN (2, 3)");
+            $stmt->execute($pubIds);
+            $staleDois = $stmt->rowCount();
+        }
+
+        if ($dryRun) {
+            $pdo->rollBack();
+        } else {
+            $pdo->commit();
+        }
+    } catch (PDOException $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        // users.email is unique: a concurrent insert of the new address lands here.
+        if ($e->getCode() == '23000') {
+            $fail(409, 'This email already belongs to another OJS account', 'email_in_use');
+            return;
+        }
+        error_log('[OJS-Bridge] update_person failed: ' . $e->getMessage());
+        $fail(500, 'Failed to update the person in OJS', 'server_error');
+        return;
+    }
+
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'dry_run' => $dryRun,
+        'account' => $account ? ['user_id' => (int)$account['user_id']] : null,
+        'bylines' => count($bylines),
+        'publications' => count(array_unique(array_map(fn ($b) => (int)$b['publication_id'], $bylines))),
+        'changed_publications' => count($changedPublications),
+        'dois_marked_stale' => $staleDois,
+        'before' => $before,
+        'after' => $after,
+        'warnings' => $warnings,
+    ], JSON_INVALID_UTF8_SUBSTITUTE);
+}
+
+/**
+ * Write the requested name/ORCID changes into one record's settings rows.
+ * Names are updated in every locale the record already has (a missing name
+ * is added in the record's own locale); the ORCID iD lives in locale ''.
+ * Returns whether any row changed.
+ */
+function bridgeApplySettings(PDO $pdo, string $table, string $idColumn, int $id, array $settings, array $changes): bool
+{
+    $changed = false;
+    $upsert = $pdo->prepare("INSERT INTO {$table} ({$idColumn}, locale, setting_name, setting_value) VALUES (?, ?, ?, ?)
+                             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+    $defaultLocale = array_key_first($settings['givenName'] ?? []) ?? array_key_first($settings['familyName'] ?? []) ?? 'en';
+
+    foreach (['givenName', 'familyName'] as $field) {
+        if (!array_key_exists($field, $changes)) {
+            continue;
+        }
+        $locales = $settings[$field] ?? [$defaultLocale => null];
+        foreach ($locales as $locale => $current) {
+            if ($current !== $changes[$field]) {
+                $upsert->execute([$id, (string)$locale, $field, $changes[$field]]);
+                $changed = true;
+            }
+        }
+    }
+
+    if (array_key_exists('orcid', $changes)) {
+        $current = $settings['orcid'] ?? [];
+        if ($changes['orcid'] === null) {
+            if ($current) {
+                $pdo->prepare("DELETE FROM {$table} WHERE {$idColumn} = ? AND setting_name = 'orcid'")->execute([$id]);
+                $changed = true;
+            }
+        } elseif (array_values($current) !== [$changes['orcid']] || array_keys($current) !== ['']) {
+            $pdo->prepare("DELETE FROM {$table} WHERE {$idColumn} = ? AND setting_name = 'orcid'")->execute([$id]);
+            $upsert->execute([$id, '', 'orcid', $changes['orcid']]);
+            $changed = true;
+        }
+    }
+    return $changed;
+}
+
+/** First non-empty value of a [locale => value] map, or null. */
+function bridgeFirstValue(array $byLocale): ?string
+{
+    foreach ($byLocale as $value) {
+        if ($value !== null && $value !== '') {
+            return $value;
+        }
+    }
+    return null;
+}
+
+/**
+ * "0000-0002-1825-0097" or "https://orcid.org/0000-0002-1825-0097" ->
+ * "https://orcid.org/0000-0002-1825-0097" (the form OJS stores), or null when
+ * the format or the ISO 7064 MOD 11-2 check digit is wrong.
+ */
+function bridgeNormalizeOrcid(string $raw): ?string
+{
+    $id = strtoupper(preg_replace('#^https?://(www\.)?orcid\.org/#i', '', trim($raw)));
+    if (!preg_match('/^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/', $id)) {
+        return null;
+    }
+    $digits = str_replace('-', '', $id);
+    $total = 0;
+    for ($i = 0; $i < 15; $i++) {
+        $total = ($total + (int)$digits[$i]) * 2;
+    }
+    $check = (12 - $total % 11) % 11;
+    $expected = $check === 10 ? 'X' : (string)$check;
+    return $digits[15] === $expected ? 'https://orcid.org/' . $id : null;
 }
