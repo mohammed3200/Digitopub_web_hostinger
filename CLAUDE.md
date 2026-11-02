@@ -28,15 +28,16 @@ The system enforces strict identity separation. **The previous "digitopub never 
 - **digitopub.com**:
   - Owns admin authentication (JWT-based, `auth_token` cookie).
   - **Also** holds an ORCID-derived public-user identity (`digitopub_identity` cookie). ORCID is the SOLE identity provider for public users; digitopub never sees passwords, never validates credentials, never stores email/password tuples.
-  - **Publication-alert subscribers are the one exception to "no public emails"** (epic #204). Opt-in subscriber emails are stored in plaintext in `notification_subscribers`: `pending` until the owner confirms (double opt-in), and purged after 90 days if never confirmed. `DELETE /api/account/data` erases them (matched by ORCID iD or verified email hash). This is the ONLY place digitopub stores public users' emails. It is not an identity: subscribers authenticate only by signed links (`src/lib/notification-token.ts`, `NOTIFY_TOKEN_SECRET`), never by cookie or password.
+  - **Publication-alert subscribers are the one exception to "no public emails"** (epic #204). Opt-in subscriber emails are stored in plaintext in `notification_subscribers`: `pending` until the owner confirms (double opt-in), and purged after 90 days if never confirmed. `DELETE /api/account/data` erases them (matched by ORCID iD or verified email hash). Apart from pending author email changes (#233, `person_email_changes`: old and new address of an OJS author, deleted after 30 days and by `DELETE /api/account/data`), this is the ONLY place digitopub stores public users' emails. It is not an identity: subscribers authenticate only by signed links (`src/lib/notification-token.ts`, `NOTIFY_TOKEN_SECRET`), never by cookie or password.
   - The two cookies are wholly separate code paths. Admin auth uses `getSession()` / `jwtVerify`; public auth uses `getIdentity()` / `verifyCookie` from `src/lib/identity-cookie.ts`. They MUST NOT cross-pollinate.
 
 - **submitmanager.com (OJS)**:
   - Owns canonical public-user identities (editorial workflows still require an OJS account).
   - Owns ALL submission and editorial workflows.
-  - digitopub writes to OJS only through the guarded, audited functions in `src/lib/ojs-write-guard.ts`. Every write is logged in `audit_ojs_writes` (audit row first). Today there are two:
+  - digitopub writes to OJS only through the guarded, audited functions in `src/lib/ojs-write-guard.ts`. Every write is logged in `audit_ojs_writes` (audit row first). Today there are three:
     - ORCID backfill: when `ENABLE_ORCID_OJS_BACKFILL=true`, the ORCID iD is written into OJS `user_settings` on first email-match login.
     - Journal specialization (#234): an admin's choice of `Journal.field` is written to the OJS journal setting `digitopubSpecialization` through the `set_journal_specialization` action of `ojs-user-bridge.php`, queued in `ojs_sync_jobs` and retried by `POST /api/ojs/cron/push-sync`.
+    - Author edits (#233): `updatePersonInOjsWithAudit()` changes an author's name, email and ORCID iD on their OJS account (if any) and on every publication byline with the same email, in one transaction, through the `update_person` action of `ojs-user-bridge.php`. An email or ORCID iD that belongs to someone else is refused (409), never merged. Publication DOIs whose byline changed are marked stale (OJS `markStale` rule) for Crossref re-deposit. Admins edit anyone (`/api/author-profile`, `requireAdmin`); a signed-in author edits only their own record (`/api/account/profile`, `getIdentity()`), and can set only their own verified ORCID iD. A new email is never written directly: it waits in `person_email_changes` until the new address opens a single-use link (`/api/account/confirm-email`).
 
 ## Public-User Identity (UIET-P1) — what changed and why
 
@@ -64,7 +65,7 @@ The system enforces strict identity separation. **The previous "digitopub never 
 
 **The hard rules** (enforced by ESLint `no-restricted-imports` in `eslint.config.mjs`, which bans importing `getSession`/`createSession`/`destroySession` and `jose.jwtVerify` in `app/**` and `src/server/routes/**` outside admin paths — there is no separate CI grep):
 - NO public route may call `getSession()` or `jose.jwtVerify` directly. Public routes use `getIdentity(request)` from `src/lib/identity-cookie.ts`.
-- digitopub writes to OJS ONLY through the functions in `src/lib/ojs-write-guard.ts` (`writeOrcidToOjsWithAudit()`, `setJournalSpecializationInOjsWithAudit()`). Every write produces an `audit_ojs_writes` row. New kinds of OJS write get their own function there and their own explicitly allowlisted bridge action, never a generic "set any setting" path.
+- digitopub writes to OJS ONLY through the functions in `src/lib/ojs-write-guard.ts` (`writeOrcidToOjsWithAudit()`, `setJournalSpecializationInOjsWithAudit()`, `updatePersonInOjsWithAudit()`). Every write produces an `audit_ojs_writes` row. New kinds of OJS write get their own function there and their own explicitly allowlisted bridge action, never a generic "set any setting" path.
 - `ENABLE_ORCID_OJS_BACKFILL` defaults to `false` in production. Flip with intent only.
 - Submission flow (registration → OJS) is unchanged. digitopub never intercepts submit clicks.
 

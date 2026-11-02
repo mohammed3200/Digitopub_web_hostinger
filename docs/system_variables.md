@@ -51,7 +51,7 @@ Only required if integrating with an Open Journal Systems instance. The pool is 
 | `OJS_SYNC_ENABLED` | Enable/disable OJS sync cron | `false` | Configuration only |
 | `OJS_SYNC_INTERVAL_MINUTES` | Sync interval in minutes | `360` | Configuration only |
 | `OJS_API_KEY` | Bearer key for the OJS PHP bridges; must match `[digitopub] api_key` in OJS `config.inc.php` | — | `src/features/ojs/server/ojs-client.ts`, `ojs-pdf-stream.ts` |
-| `OJS_USER_BRIDGE_URL` | Full URL of `ojs-user-bridge.php` (user provisioning, journal specialization sync #234) | `${OJS_BASE_URL}/ojs-user-bridge.php` | `src/features/ojs/server/ojs-client.ts` |
+| `OJS_USER_BRIDGE_URL` | Full URL of `ojs-user-bridge.php` (user provisioning, journal specialization sync #234, author edits #233; deploy: `docs/ops/ojs-user-bridge-deploy.md`) | `${OJS_BASE_URL}/ojs-user-bridge.php` | `src/features/ojs/server/ojs-client.ts` |
 | `OJS_BRIDGE_URL` | Full URL of the **PDF** bridge `ojs-pdf-bridge.php` (alias `OJS_PDF_BRIDGE_URL`). Not used for user/journal writes. | derived from `OJS_BASE_URL` | `src/features/ojs/server/ojs-pdf-stream.ts` |
 
 ---
