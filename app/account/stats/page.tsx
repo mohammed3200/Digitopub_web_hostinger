@@ -112,6 +112,16 @@ export default function AccountStatsPage() {
                 </Link>
                 .
             </p>
+            <p className="text-xs text-muted-foreground">
+                Your name or email wrong on your articles?{" "}
+                <Link
+                    href="/account/profile"
+                    className="font-semibold text-primary hover:underline"
+                >
+                    Edit my author profile
+                </Link>
+                .
+            </p>
         </div>
     )
 }
