@@ -1010,6 +1010,8 @@ model PersonEmailChange {
   new_email             String    @db.VarChar(90)
   requested_by_admin_id BigInt?
   requested_by_orcid    String?   @db.VarChar(19)
+  /// An admin confirmed that differently named records under old_email are one person.
+  same_person           Boolean   @default(false)
   expires_at            DateTime
   /// Set when the link is used; the OJS write happens right after.
   confirmed_at          DateTime?

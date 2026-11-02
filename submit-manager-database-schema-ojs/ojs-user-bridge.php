@@ -500,6 +500,8 @@ function bridgeUpdatePerson(PDO $pdo, array $payload): void
         return;
     }
     $dryRun = ($payload['dry_run'] ?? false) === true;
+    // The caller confirms that records with different names under this email are one person.
+    $samePerson = ($payload['same_person'] ?? false) === true;
 
     $changes = [];
     foreach (['givenName', 'familyName'] as $field) {
@@ -594,6 +596,36 @@ function bridgeUpdatePerson(PDO $pdo, array $payload): void
         ];
         $after = array_merge($before, $changes);
 
+        // One email can cover several people: submitters often give their own
+        // address for every co-author. Records with different names under this
+        // email are changed together only when the caller confirms they are
+        // one person (same_person); otherwise 409 with the names found.
+        $nameKeys = [];
+        $collectName = function (array $s) use (&$nameKeys): void {
+            $full = trim((bridgeFirstValue($s['givenName'] ?? []) ?? '') . ' ' . (bridgeFirstValue($s['familyName'] ?? []) ?? ''));
+            if ($full !== '') {
+                $nameKeys[mb_strtolower(preg_replace('/\s+/u', ' ', $full))] = $full;
+            }
+        };
+        if ($account) {
+            $collectName($accountSettings);
+        }
+        foreach ($bylines as $b) {
+            $collectName($bylineSettings[(int)$b['author_id']] ?? []);
+        }
+        $distinctNames = array_values($nameKeys);
+        if ($changes && count($distinctNames) > 1 && !$samePerson) {
+            $pdo->rollBack();
+            http_response_code(409);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Records with different names use this email; confirm they are one person',
+                'code' => 'ambiguous_person',
+                'names' => $distinctNames,
+            ], JSON_INVALID_UTF8_SUBSTITUTE);
+            return;
+        }
+
         // Refuse an email or ORCID iD that already belongs to a different person.
         if (isset($changes['email']) && strcasecmp($changes['email'], $matchEmail) !== 0) {
             $stmt = $pdo->prepare('SELECT (SELECT COUNT(*) FROM users WHERE email = ?) + (SELECT COUNT(*) FROM authors WHERE email = ?) AS n');
@@ -605,12 +637,14 @@ function bridgeUpdatePerson(PDO $pdo, array $payload): void
             }
         }
         if (!empty($changes['orcid'])) {
+            // Compare the bare iD: older rows may hold http://, www. or no prefix at all.
+            $bareId = substr($changes['orcid'], strlen('https://orcid.org/'));
             $stmt = $pdo->prepare("SELECT
                 (SELECT COUNT(*) FROM author_settings s JOIN authors a ON a.author_id = s.author_id
-                  WHERE s.setting_name = 'orcid' AND s.setting_value = ? AND a.email <> ?)
+                  WHERE s.setting_name = 'orcid' AND UPPER(SUBSTRING_INDEX(TRIM(s.setting_value), '/', -1)) = ? AND a.email <> ?)
               + (SELECT COUNT(*) FROM user_settings s JOIN users u ON u.user_id = s.user_id
-                  WHERE s.setting_name = 'orcid' AND s.setting_value = ? AND u.email <> ?) AS n");
-            $stmt->execute([$changes['orcid'], $matchEmail, $changes['orcid'], $matchEmail]);
+                  WHERE s.setting_name = 'orcid' AND UPPER(SUBSTRING_INDEX(TRIM(s.setting_value), '/', -1)) = ? AND u.email <> ?) AS n");
+            $stmt->execute([$bareId, $matchEmail, $bareId, $matchEmail]);
             if ((int)$stmt->fetch()['n'] > 0) {
                 $pdo->rollBack();
                 $fail(409, 'This ORCID iD already belongs to another OJS account or author', 'orcid_in_use');
@@ -673,8 +707,9 @@ function bridgeUpdatePerson(PDO $pdo, array $payload): void
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        // users.email is unique: a concurrent insert of the new address lands here.
-        if ($e->getCode() == '23000') {
+        // users.email is unique: a concurrent insert of the new address lands
+        // here as a duplicate key (1062). Other integrity errors are real bugs.
+        if (($e->errorInfo[1] ?? null) == 1062) {
             $fail(409, 'This email already belongs to another OJS account', 'email_in_use');
             return;
         }
@@ -692,6 +727,7 @@ function bridgeUpdatePerson(PDO $pdo, array $payload): void
         'publications' => count(array_unique(array_map(fn ($b) => (int)$b['publication_id'], $bylines))),
         'changed_publications' => count($changedPublications),
         'dois_marked_stale' => $staleDois,
+        'names' => $distinctNames,
         'before' => $before,
         'after' => $after,
         'warnings' => $warnings,
@@ -726,13 +762,17 @@ function bridgeApplySettings(PDO $pdo, string $table, string $idColumn, int $id,
 
     if (array_key_exists('orcid', $changes)) {
         $current = $settings['orcid'] ?? [];
+        // A changed or removed iD also drops the ORCID plugin's settings for the
+        // old one (orcidAccessToken, orcidIsVerified, …), so OJS doesn't show
+        // the new iD as authenticated or push works to the old record.
+        $clear = $pdo->prepare("DELETE FROM {$table} WHERE {$idColumn} = ? AND setting_name LIKE 'orcid%'");
         if ($changes['orcid'] === null) {
             if ($current) {
-                $pdo->prepare("DELETE FROM {$table} WHERE {$idColumn} = ? AND setting_name = 'orcid'")->execute([$id]);
+                $clear->execute([$id]);
                 $changed = true;
             }
         } elseif (array_values($current) !== [$changes['orcid']] || array_keys($current) !== ['']) {
-            $pdo->prepare("DELETE FROM {$table} WHERE {$idColumn} = ? AND setting_name = 'orcid'")->execute([$id]);
+            $clear->execute([$id]);
             $upsert->execute([$id, '', 'orcid', $changes['orcid']]);
             $changed = true;
         }

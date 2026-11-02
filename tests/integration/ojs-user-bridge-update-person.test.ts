@@ -258,6 +258,44 @@ describe.skipIf(!DB_URL || !HAS_PHP)("ojs-user-bridge.php update_person", () => 
     expect(await setting("author_settings", "author_id", seed.authorB, "orcid")).toBeNull()
   })
 
+  it("refuses to change records with different names under one email unless same_person is set", async () => {
+    // A co-author entered under Alice's address (common in OJS submissions).
+    const coId = await insert("INSERT INTO authors (email, publication_id, seq) VALUES (?, ?, 1)", ["alice@bridge-test.invalid", seed.pub2])
+    ids.authors.push(coId)
+    await insert("INSERT INTO author_settings (author_id, locale, setting_name, setting_value) VALUES (?, 'en', 'givenName', 'Carol'), (?, 'en', 'familyName', 'Co')", [coId, coId])
+
+    const lookup = await call({ match_email: "alice@bridge-test.invalid", dry_run: true })
+    expect(lookup.status).toBe(200)
+    expect(lookup.body.names).toEqual(["Alice Old", "Carol Co"])
+
+    const refused = await call({ match_email: "alice@bridge-test.invalid", familyName: "New" })
+    expect(refused.status).toBe(409)
+    expect(refused.body).toMatchObject({ code: "ambiguous_person", names: ["Alice Old", "Carol Co"] })
+    expect(await setting("author_settings", "author_id", coId, "familyName")).toBe("Co")
+
+    const confirmed = await call({ match_email: "alice@bridge-test.invalid", familyName: "New", same_person: true })
+    expect(confirmed.status).toBe(200)
+    expect(await setting("author_settings", "author_id", coId, "familyName")).toBe("New")
+  })
+
+  it("drops the ORCID plugin's settings for the old iD when the iD changes", async () => {
+    await insert("INSERT INTO author_settings (author_id, locale, setting_name, setting_value) VALUES (?, '', 'orcidAccessToken', 'tok')", [seed.authorB])
+    const res = await call({ match_email: "bob@bridge-test.invalid", orcid: ORCID_A.replace("https://orcid.org/", "") })
+    expect(res.status).toBe(200)
+    expect(await setting("author_settings", "author_id", seed.authorB, "orcidAccessToken")).toBeNull()
+    expect(await setting("author_settings", "author_id", seed.authorB, "orcid")).toBe(ORCID_A)
+  })
+
+  it("finds an ORCID clash stored in another URL form", async () => {
+    await db.query("UPDATE author_settings SET setting_value = ? WHERE author_id = ? AND setting_name = 'orcid'", [
+      ORCID_B.replace("https://", "http://"),
+      seed.authorB,
+    ])
+    const res = await call({ match_email: "alice@bridge-test.invalid", orcid: ORCID_B })
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe("orcid_in_use")
+  })
+
   it("refuses empty given names, control characters and 4-byte characters", async () => {
     for (const bad of [{ givenName: "" }, { familyName: "a\u0007b" }, { familyName: "Old 😀" }]) {
       const res = await call({ match_email: "alice@bridge-test.invalid", ...bad })

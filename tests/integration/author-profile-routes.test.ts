@@ -43,6 +43,7 @@ import { authorProfileRouter } from "@/src/features/author-profile/server/route"
 import { accountRouter } from "@/src/server/routes/account"
 import { IDENTITY_COOKIE_NAME, mintCookie, __resetRevocationCacheForTests } from "@/src/lib/identity-cookie"
 import { __resetRateLimiterForTests } from "@/src/lib/rate-limiter"
+import { emailHash } from "@/src/lib/email-hash"
 
 const ORCID = "0000-0002-1825-0097"
 const SUMMARY = {
@@ -51,6 +52,7 @@ const SUMMARY = {
   publications: 2,
   changed_publications: 2,
   dois_marked_stale: 1,
+  names: ["Alice Old"],
   before: { givenName: "Alice", familyName: "Old", email: "alice@example.org", orcid: null },
   after: { givenName: "Alice", familyName: "New", email: "alice@example.org", orcid: null },
   warnings: [],
@@ -66,8 +68,9 @@ function post(path: string, body: unknown, headers: Record<string, string> = {})
   })
 }
 
-function signedIn(ojsUserId: number | null = null) {
-  const cookie = mintCookie({ orcid: ORCID, ojs_user_id: ojsUserId, email_hash: null })
+/** Signed in with ORCID; `verifiedEmail` is the email ORCID shared at sign-in (hashed in the cookie). */
+function signedIn(ojsUserId: number | null = null, verifiedEmail: string | null = "alice@example.org") {
+  const cookie = mintCookie({ orcid: ORCID, ojs_user_id: ojsUserId, email_hash: emailHash(verifiedEmail) })
   return { cookie: `${IDENTITY_COOKIE_NAME}=${encodeURIComponent(cookie)}` }
 }
 
@@ -82,14 +85,14 @@ beforeEach(() => {
 describe("admin /api/author-profile (#233)", () => {
   it("requires an admin", async () => {
     mockSession = null
-    const res = await app.request("http://test/author-profile/person?email=alice@example.org")
+    const res = await post("/author-profile/person/lookup", { email: "alice@example.org" })
     expect(res.status).toBe(401)
     expect(h.previewPersonUpdate).not.toHaveBeenCalled()
   })
 
   it("returns the current values", async () => {
     h.previewPersonUpdate.mockResolvedValue({ success: true, auditId: null, ...SUMMARY })
-    const res = await app.request("http://test/author-profile/person?email=alice@example.org")
+    const res = await post("/author-profile/person/lookup", { email: "alice@example.org" })
     expect(res.status).toBe(200)
     expect((await res.json()).data).toMatchObject({ bylines: 2, before: { familyName: "Old" } })
     expect(h.previewPersonUpdate).toHaveBeenCalledWith("alice@example.org")
@@ -97,7 +100,7 @@ describe("admin /api/author-profile (#233)", () => {
 
   it("maps a not_found preview to 404", async () => {
     h.previewPersonUpdate.mockResolvedValue({ success: false, auditId: null, code: "not_found", error: "x" })
-    const res = await app.request("http://test/author-profile/person?email=nobody@example.org")
+    const res = await post("/author-profile/person/lookup", { email: "nobody@example.org" })
     expect(res.status).toBe(404)
   })
 
@@ -120,13 +123,29 @@ describe("admin /api/author-profile (#233)", () => {
     const res = await post("/author-profile/person", { matchEmail: "alice@example.org", email: "alice.new@example.org" })
     expect(res.status).toBe(200)
     expect((await res.json()).data).toEqual({ applied: null, confirmationSentTo: "alice.new@example.org" })
-    expect(h.previewPersonUpdate).toHaveBeenCalledWith("alice@example.org", { email: "alice.new@example.org" })
+    expect(h.previewPersonUpdate).toHaveBeenCalledWith("alice@example.org", { email: "alice.new@example.org" }, { samePerson: undefined })
     expect(h.updatePersonInOjsWithAudit).not.toHaveBeenCalled()
     expect(h.requestEmailChange).toHaveBeenCalledWith({
       oldEmail: "alice@example.org",
       newEmail: "alice.new@example.org",
       actor: { adminId: 3n },
+      samePerson: undefined,
     })
+  })
+
+  it("passes the bridge's names through when one email covers several people", async () => {
+    h.updatePersonInOjsWithAudit.mockResolvedValue({
+      success: false, auditId: 9n, code: "ambiguous_person", error: "x", names: ["Alice Old", "Carol Co"],
+    })
+    const res = await post("/author-profile/person", { matchEmail: "alice@example.org", familyName: "New" })
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ code: "ambiguous_person", names: ["Alice Old", "Carol Co"] })
+  })
+
+  it("sends samePerson once the admin confirms", async () => {
+    h.updatePersonInOjsWithAudit.mockResolvedValue({ success: true, auditId: 9n, ...SUMMARY })
+    await post("/author-profile/person", { matchEmail: "alice@example.org", familyName: "New", samePerson: true })
+    expect(h.updatePersonInOjsWithAudit.mock.calls[0][0]).toMatchObject({ samePerson: true })
   })
 
   it("refuses an email that belongs to someone else before saving anything", async () => {
@@ -169,21 +188,41 @@ describe("self-service /api/account/profile (#233)", () => {
     const res = await app.request("http://test/account/profile", { headers: signedIn() })
     expect(res.status).toBe(200)
     expect((await res.json()).data).toMatchObject({ signedInOrcid: ORCID, bylines: 2 })
-    expect(h.ojsQuery.mock.calls[0][1]).toEqual([`https://orcid.org/${ORCID}`])
+    // Compared as the bare iD, whatever URL form the byline stored.
+    expect(h.ojsQuery.mock.calls[0][1]).toEqual([ORCID])
   })
 
   it("uses the linked OJS account's email first", async () => {
-    h.ojsQuery.mockResolvedValueOnce([{ email: "alice@example.org" }])
+    h.ojsQuery.mockResolvedValueOnce([{ email: "alice@example.org" }]).mockResolvedValue([])
     h.previewPersonUpdate.mockResolvedValue({ success: true, auditId: null, ...SUMMARY })
     await app.request("http://test/account/profile", { headers: signedIn(12) })
     expect(h.ojsQuery.mock.calls[0]).toEqual(["SELECT email FROM users WHERE user_id = ?", [12]])
     expect(h.previewPersonUpdate).toHaveBeenCalledWith("alice@example.org")
   })
 
-  it("refuses when the ORCID iD is on bylines with different emails", async () => {
-    h.ojsQuery.mockResolvedValue([{ email: "a@example.org" }, { email: "b@example.org" }])
-    const res = await app.request("http://test/account/profile", { headers: signedIn() })
-    expect(res.status).toBe(409)
+  it("picks, among bylines carrying the ORCID iD, the email ORCID verified", async () => {
+    h.ojsQuery.mockResolvedValue([{ email: "other@example.org" }, { email: "alice@example.org" }])
+    h.previewPersonUpdate.mockResolvedValue({ success: true, auditId: null, ...SUMMARY })
+    expect((await app.request("http://test/account/profile", { headers: signedIn() })).status).toBe(200)
+    expect(h.previewPersonUpdate).toHaveBeenCalledWith("alice@example.org")
+  })
+
+  it("never trusts a byline ORCID iD alone: a submitter-typed iD on someone else's byline gives no access", async () => {
+    // The attacker's ORCID iD was typed onto a byline with the victim's email.
+    h.ojsQuery.mockResolvedValue([{ email: "victim@example.org" }])
+    const headers = signedIn(null, "attacker@example.org")
+    expect((await app.request("http://test/account/profile", { headers })).status).toBe(404)
+    expect((await post("/account/profile", { email: "attacker@example.org" }, headers)).status).toBe(404)
+    expect(h.previewPersonUpdate).not.toHaveBeenCalled()
+    expect(h.updatePersonInOjsWithAudit).not.toHaveBeenCalled()
+    expect(h.requestEmailChange).not.toHaveBeenCalled()
+  })
+
+  it("refuses when ORCID shared no verified email", async () => {
+    h.ojsQuery.mockResolvedValue([{ email: "alice@example.org" }])
+    const res = await app.request("http://test/account/profile", { headers: signedIn(null, null) })
+    expect(res.status).toBe(404)
+    expect(h.ojsQuery).not.toHaveBeenCalled()
   })
 
   it("can only set the signed-in ORCID iD, and records the author as actor", async () => {

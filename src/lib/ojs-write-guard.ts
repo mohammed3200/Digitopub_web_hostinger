@@ -212,6 +212,8 @@ export interface PersonUpdateSummary {
   publications: number
   changed_publications: number
   dois_marked_stale: number
+  /** Distinct names on the account and bylines under this email; more than one may mean several people. */
+  names: string[]
   before: PersonValues
   after: PersonValues
   warnings: string[]
@@ -223,33 +225,38 @@ export type PersonUpdateCode =
   | "not_found"
   | "email_in_use"
   | "orcid_in_use"
+  /** Records with different names share the email; repeat with samePerson once confirmed. */
+  | "ambiguous_person"
   | "unavailable"
 
 export type PersonUpdateResult =
   | ({ success: true; auditId: bigint | null } & PersonUpdateSummary)
-  | { success: false; auditId: bigint | null; code: PersonUpdateCode; error: string }
+  | { success: false; auditId: bigint | null; code: PersonUpdateCode; error: string; names?: string[] }
 
 export interface UpdatePersonInput {
   /** The person's current email (case-insensitive); identifies the account and every byline. */
   matchEmail: string
   changes: PersonChanges
+  /** Confirmed that the differently named records under this email are one person. */
+  samePerson?: boolean
   /** Exactly one actor: the admin, or (self-service) the signed-in ORCID iD. */
   actorAdminId?: bigint | null
   actorOrcid?: string | null
   requestId?: string
 }
 
-const PERSON_CODES: PersonUpdateCode[] = ["invalid_input", "invalid_orcid", "not_found", "email_in_use", "orcid_in_use"]
+const PERSON_CODES: PersonUpdateCode[] = ["invalid_input", "invalid_orcid", "not_found", "email_in_use", "orcid_in_use", "ambiguous_person"]
 
 /** Audit target id: no plaintext email in the indexed column. */
 export function personTargetId(email: string): string {
   return createHash("sha256").update(email.trim().toLowerCase()).digest("hex")
 }
 
-function bridgeFailure(result: Extract<UserBridgeResult, { ok: false }>): { code: PersonUpdateCode; error: string } {
+function bridgeFailure(result: Extract<UserBridgeResult, { ok: false }>): { code: PersonUpdateCode; error: string; names?: string[] } {
   const code = PERSON_CODES.find((c) => c === result.code) ?? "unavailable"
   const error = result.status ? `HTTP ${result.status}: ${result.error}` : result.error
-  return { code, error }
+  const names = Array.isArray(result.data?.names) ? result.data.names.map(String) : undefined
+  return { code, error, ...(names ? { names } : {}) }
 }
 
 function toSummary(data: Record<string, unknown>): PersonUpdateSummary {
@@ -259,6 +266,7 @@ function toSummary(data: Record<string, unknown>): PersonUpdateSummary {
     publications: Number(data.publications ?? 0),
     changed_publications: Number(data.changed_publications ?? 0),
     dois_marked_stale: Number(data.dois_marked_stale ?? 0),
+    names: Array.isArray(data.names) ? data.names.map(String) : [],
     before: data.before as PersonValues,
     after: data.after as PersonValues,
     warnings: Array.isArray(data.warnings) ? data.warnings.map(String) : [],
@@ -270,8 +278,18 @@ function toSummary(data: Record<string, unknown>): PersonUpdateSummary {
  * runs the update with dry_run and rolls it back. With no changes it returns
  * the person's current values. Reads only, so no audit row.
  */
-export async function previewPersonUpdate(matchEmail: string, changes: PersonChanges = {}): Promise<PersonUpdateResult> {
-  const result = await postToUserBridge({ action: "update_person", match_email: matchEmail, ...changes, dry_run: true })
+export async function previewPersonUpdate(
+  matchEmail: string,
+  changes: PersonChanges = {},
+  opts: { samePerson?: boolean } = {}
+): Promise<PersonUpdateResult> {
+  const result = await postToUserBridge({
+    action: "update_person",
+    match_email: matchEmail,
+    ...changes,
+    ...(opts.samePerson ? { same_person: true } : {}),
+    dry_run: true,
+  })
   if (!result.ok) return { success: false, auditId: null, ...bridgeFailure(result) }
   return { success: true, auditId: null, ...toSummary(result.data) }
 }
@@ -294,7 +312,7 @@ export async function updatePersonInOjsWithAudit(input: UpdatePersonInput): Prom
       request_id: input.requestId ?? randomUUID(),
       orcid: input.actorOrcid ?? null,
       ojs_table: "users,user_settings,authors,author_settings,dois",
-      ojs_column_set: `fields=${fields.join(",")}`,
+      ojs_column_set: `fields=${fields.join(",")}${input.samePerson ? "; same_person" : ""}`,
       reason: "person_update",
       target_type: "person",
       target_id: personTargetId(input.matchEmail),
@@ -304,7 +322,12 @@ export async function updatePersonInOjsWithAudit(input: UpdatePersonInput): Prom
     select: { id: true },
   })
 
-  const result = await postToUserBridge({ action: "update_person", match_email: input.matchEmail, ...input.changes })
+  const result = await postToUserBridge({
+    action: "update_person",
+    match_email: input.matchEmail,
+    ...input.changes,
+    ...(input.samePerson ? { same_person: true } : {}),
+  })
 
   if (result.ok) {
     const summary = toSummary(result.data)

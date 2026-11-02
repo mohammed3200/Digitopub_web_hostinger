@@ -17,6 +17,8 @@ export interface PersonChanges {
     orcid?: string | null
     /** Self-service only. */
     linkOrcid?: boolean
+    /** Admin only: the differently named records under this email are one person. */
+    samePerson?: boolean
 }
 
 interface PersonEditFormProps {
@@ -45,6 +47,9 @@ export function PersonEditForm({ current, allowOrcid, signedInOrcid, onPreview, 
     const [email, setEmail] = useState(before.email)
     const [orcid, setOrcid] = useState(before.orcid ?? "")
     const [linkOrcid, setLinkOrcid] = useState(false)
+    const [samePerson, setSamePerson] = useState(false)
+    // One email can cover several people (a submitter's address on co-authors' bylines).
+    const severalNames = current.names.length > 1
     const [preview, setPreview] = useState<PersonUpdateSummary | null>(null)
     const [pending, setPending] = useState(false)
     const [sentTo, setSentTo] = useState<string | null>(null)
@@ -59,6 +64,7 @@ export function PersonEditForm({ current, allowOrcid, signedInOrcid, onPreview, 
         if (email.trim() !== before.email) changes.email = email.trim()
         if (allowOrcid && bareOrcid(orcid) !== bareOrcid(before.orcid)) changes.orcid = orcid.trim() === "" ? null : orcid.trim()
         if (canLinkOrcid && linkOrcid) changes.linkOrcid = true
+        if (allowOrcid && severalNames && samePerson && Object.keys(changes).length > 0) changes.samePerson = true
         return changes
     }
 
@@ -117,6 +123,28 @@ export function PersonEditForm({ current, allowOrcid, signedInOrcid, onPreview, 
                     {current.bylines !== 1 ? "s" : ""} on {current.publications} article
                     {current.publications !== 1 ? "s" : ""}
                 </p>
+                {severalNames && (
+                    <div className="mb-4 rounded-md border border-amber-500/50 p-3 text-sm space-y-2" role="note">
+                        <p>Records under this email use different names, so it may belong to more than one person:</p>
+                        <ul className="list-disc pl-5">
+                            {current.names.map((n) => (
+                                <li key={n}>{n}</li>
+                            ))}
+                        </ul>
+                        {allowOrcid ? (
+                            <div className="flex items-center gap-2">
+                                <Checkbox
+                                    id={`${id}-same`}
+                                    checked={samePerson}
+                                    onCheckedChange={(v) => setSamePerson(v === true)}
+                                />
+                                <Label htmlFor={`${id}-same`}>These are all the same person; change every record</Label>
+                            </div>
+                        ) : (
+                            <p>To change these records, contact the editorial office.</p>
+                        )}
+                    </div>
+                )}
                 <form onSubmit={onSubmit} className="space-y-4">
                     <div className="space-y-2">
                         <Label htmlFor={`${id}-given`}>Given name</Label>

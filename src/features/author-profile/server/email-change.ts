@@ -12,7 +12,7 @@ import { createHash, randomBytes } from "node:crypto"
 import { prisma } from "@/src/lib/db/config"
 import { sendEmail } from "@/src/lib/email/service"
 import { escapeHtml } from "@/src/lib/email/renderer"
-import { updatePersonInOjsWithAudit, type PersonUpdateCode } from "@/src/lib/ojs-write-guard"
+import { previewPersonUpdate, updatePersonInOjsWithAudit, type PersonUpdateCode } from "@/src/lib/ojs-write-guard"
 
 export const EMAIL_CHANGE_TTL_MS = 24 * 60 * 60 * 1000
 /** Pending and used rows are kept this long, then deleted. */
@@ -41,6 +41,8 @@ export async function requestEmailChange(input: {
   oldEmail: string
   newEmail: string
   actor: EmailChangeActor
+  /** Admin only: the differently named records under oldEmail are one person. */
+  samePerson?: boolean
   now?: Date
 }): Promise<{ sent: boolean; expiresAt: Date }> {
   const now = input.now ?? new Date()
@@ -58,6 +60,7 @@ export async function requestEmailChange(input: {
       new_email: input.newEmail.trim(),
       requested_by_admin_id: input.actor.adminId ?? null,
       requested_by_orcid: input.actor.orcid ?? null,
+      same_person: input.samePerson === true,
       expires_at: expiresAt,
     },
     select: { id: true },
@@ -100,12 +103,31 @@ export async function confirmEmailChange(token: string, now: Date = new Date()):
   })
   if (claimed.count === 0) return { status: "used" }
 
-  const result = await updatePersonInOjsWithAudit({
-    matchEmail: row.old_email,
-    changes: { email: row.new_email },
-    actorAdminId: row.requested_by_admin_id,
-    actorOrcid: row.requested_by_orcid,
-  })
+  let result: Awaited<ReturnType<typeof updatePersonInOjsWithAudit>>
+  try {
+    result = await updatePersonInOjsWithAudit({
+      matchEmail: row.old_email,
+      changes: { email: row.new_email },
+      samePerson: row.same_person,
+      actorAdminId: row.requested_by_admin_id,
+      actorOrcid: row.requested_by_orcid,
+    })
+  } catch (e) {
+    // Audit bookkeeping failed (our DB): release the claim so the link can be retried.
+    const message = e instanceof Error ? e.message : String(e)
+    await prisma.personEmailChange
+      .update({ where: { id: row.id }, data: { confirmed_at: null, error: `audit: ${message}`.slice(0, 255) } })
+      .catch(() => undefined)
+    return { status: "failed", code: "unavailable" }
+  }
+
+  // A retry after a timeout: the earlier attempt may have committed in OJS
+  // although we never saw the answer. The old email is gone and the new one
+  // is there, so the change is done.
+  if (!result.success && result.code === "not_found" && row.error?.startsWith("unavailable")) {
+    const now = await previewPersonUpdate(row.new_email)
+    if (now.success) result = { ...now, success: true }
+  }
 
   if (!result.success) {
     await prisma.personEmailChange.update({

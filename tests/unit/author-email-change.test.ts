@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
     update: vi.fn(),
     sendEmail: vi.fn(),
     updatePerson: vi.fn(),
+    preview: vi.fn(),
 }))
 
 vi.mock("@/src/lib/db/config", () => ({
@@ -24,7 +25,7 @@ vi.mock("@/src/lib/db/config", () => ({
     },
 }))
 vi.mock("@/src/lib/email/service", () => ({ sendEmail: h.sendEmail }))
-vi.mock("@/src/lib/ojs-write-guard", () => ({ updatePersonInOjsWithAudit: h.updatePerson }))
+vi.mock("@/src/lib/ojs-write-guard", () => ({ updatePersonInOjsWithAudit: h.updatePerson, previewPersonUpdate: h.preview }))
 
 import {
     EMAIL_CHANGE_TTL_MS,
@@ -44,6 +45,8 @@ function pending(overrides: Record<string, unknown> = {}) {
         new_email: "alice.new@example.org",
         requested_by_admin_id: 3n,
         requested_by_orcid: null,
+        same_person: false,
+        error: null,
         expires_at: new Date(NOW.getTime() + EMAIL_CHANGE_TTL_MS),
         confirmed_at: null,
         ...overrides,
@@ -120,6 +123,7 @@ describe("confirmEmailChange (#233)", () => {
         expect(h.updatePerson).toHaveBeenCalledWith({
             matchEmail: "alice@example.org",
             changes: { email: "alice.new@example.org" },
+            samePerson: false,
             actorAdminId: 3n,
             actorOrcid: null,
         })
@@ -131,6 +135,40 @@ describe("confirmEmailChange (#233)", () => {
         h.updatePerson.mockResolvedValue({ success: false, code: "unavailable", error: "timeout" })
         expect(await confirmEmailChange(TOKEN, NOW)).toEqual({ status: "failed", code: "unavailable" })
         expect(h.update.mock.calls[0][0].data).toMatchObject({ confirmed_at: null })
+    })
+
+    it("keeps the admin's same-person confirmation for the OJS write", async () => {
+        await requestEmailChange({ oldEmail: "a@example.org", newEmail: "b@example.org", actor: { adminId: 3n }, samePerson: true, now: NOW })
+        expect(h.create.mock.calls[0][0].data.same_person).toBe(true)
+        h.findUnique.mockResolvedValue(pending({ same_person: true }))
+        h.updatePerson.mockResolvedValue({ success: true })
+        await confirmEmailChange(TOKEN, NOW)
+        expect(h.updatePerson.mock.calls[0][0].samePerson).toBe(true)
+    })
+
+    it("treats a retry after a timeout that had committed as confirmed", async () => {
+        // First try timed out after OJS committed: the old email is gone, the new one is there.
+        h.findUnique.mockResolvedValue(pending({ error: "unavailable: HTTP null: timed out" }))
+        h.updatePerson.mockResolvedValue({ success: false, code: "not_found", error: "gone" })
+        h.preview.mockResolvedValue({ success: true, auditId: null })
+        expect(await confirmEmailChange(TOKEN, NOW)).toEqual({ status: "confirmed", newEmail: "alice.new@example.org" })
+        expect(h.preview).toHaveBeenCalledWith("alice.new@example.org")
+        expect(h.sendEmail.mock.calls[0][0].to).toBe("alice@example.org")
+    })
+
+    it("does not treat not_found as done without an earlier timeout", async () => {
+        h.findUnique.mockResolvedValue(pending())
+        h.updatePerson.mockResolvedValue({ success: false, code: "not_found", error: "gone" })
+        expect(await confirmEmailChange(TOKEN, NOW)).toEqual({ status: "failed", code: "not_found" })
+        expect(h.preview).not.toHaveBeenCalled()
+    })
+
+    it("releases the claim when the audit write itself fails", async () => {
+        h.findUnique.mockResolvedValue(pending())
+        h.updatePerson.mockRejectedValue(new Error("db down"))
+        h.update.mockResolvedValue({})
+        expect(await confirmEmailChange(TOKEN, NOW)).toEqual({ status: "failed", code: "unavailable" })
+        expect(h.update.mock.calls[0][0].data).toMatchObject({ confirmed_at: null, error: "audit: db down" })
     })
 
     it("uses up the link when OJS refuses the address", async () => {

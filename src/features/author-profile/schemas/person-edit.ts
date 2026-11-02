@@ -13,6 +13,13 @@ export const adminPersonEditSchema = z.object({
   email: email.optional(),
   /** "0000-0002-1825-0097" or the https://orcid.org/ form; null removes it. */
   orcid: z.string().trim().max(60).nullable().optional(),
+  /** The admin confirmed that differently named records under matchEmail are one person. */
+  samePerson: z.boolean().optional(),
+})
+
+/** Look up one author (POST, so the email stays out of access logs). */
+export const personLookupSchema = z.object({
+  email: z.string().trim().email().max(255),
 })
 
 /** Self-service edit by the signed-in author (#233). The ORCID iD can only be their own. */

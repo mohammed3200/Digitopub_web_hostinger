@@ -101,6 +101,19 @@ describe("updatePersonInOjsWithAudit (#233)", () => {
         expect(hoisted.auditUpdate.mock.calls[0][0].data).toMatchObject({ success: false, error: expect.stringContaining(code) })
     })
 
+    it("sends same_person only when confirmed, and passes the names of an ambiguous email through", async () => {
+        fetchMock.mockResolvedValue(answer(409, { success: false, error: "x", code: "ambiguous_person", names: ["Alice Old", "Carol Co"] }))
+        const refused = await updatePersonInOjsWithAudit({ matchEmail: "a@example.org", changes: { familyName: "X" } })
+        expect(refused).toMatchObject({ success: false, code: "ambiguous_person", names: ["Alice Old", "Carol Co"] })
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body).same_person).toBeUndefined()
+
+        fetchMock.mockResolvedValue(answer(200, { ...OK, names: ["Alice Old", "Carol Co"] }))
+        const ok = await updatePersonInOjsWithAudit({ matchEmail: "a@example.org", changes: { familyName: "X" }, samePerson: true })
+        expect(ok).toMatchObject({ success: true, names: ["Alice Old", "Carol Co"] })
+        expect(JSON.parse(fetchMock.mock.calls[1][1].body).same_person).toBe(true)
+        expect(hoisted.auditCreate.mock.calls[1][0].data.ojs_column_set).toBe("fields=familyName; same_person")
+    })
+
     it("reports an unreachable bridge as unavailable", async () => {
         fetchMock.mockRejectedValue(new Error("connect ECONNREFUSED"))
         const result = await updatePersonInOjsWithAudit({ matchEmail: "a@example.org", changes: { familyName: "X" } })

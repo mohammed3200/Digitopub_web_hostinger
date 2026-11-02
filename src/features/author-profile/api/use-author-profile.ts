@@ -15,6 +15,8 @@ export interface PersonUpdateSummary {
     publications: number
     changed_publications: number
     dois_marked_stale: number
+    /** Distinct names under this email; more than one may mean several people. */
+    names: string[]
     before: PersonValues
     after: PersonValues
     warnings: string[]
@@ -33,6 +35,8 @@ export interface AdminPersonInput {
     familyName?: string
     email?: string
     orcid?: string | null
+    /** Confirmed that the differently named records under matchEmail are one person. */
+    samePerson?: boolean
 }
 
 export interface MyProfileInput {
@@ -78,7 +82,8 @@ async function request<T>(url: string, body?: unknown): Promise<T> {
 export function useAdminPerson(email: string | null) {
     return useQuery<PersonUpdateSummary>({
         queryKey: ["admin-person", email],
-        queryFn: () => request<PersonUpdateSummary>(`/api/author-profile/person?email=${encodeURIComponent(email ?? "")}`),
+        // POST, so the email stays out of access logs.
+        queryFn: () => request<PersonUpdateSummary>("/api/author-profile/person/lookup", { email }),
         enabled: !!email,
         retry: false,
     })

@@ -6,6 +6,7 @@ CREATE TABLE `person_email_changes` (
     `new_email` VARCHAR(90) NOT NULL,
     `requested_by_admin_id` BIGINT NULL,
     `requested_by_orcid` VARCHAR(19) NULL,
+    `same_person` BOOLEAN NOT NULL DEFAULT false,
     `expires_at` DATETIME(3) NOT NULL,
     `confirmed_at` DATETIME(3) NULL,
     `error` VARCHAR(255) NULL,
