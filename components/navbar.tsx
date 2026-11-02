@@ -7,11 +7,35 @@ import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { LanguageSwitcher } from "@/components/language-switcher"
 import { useState } from "react"
+import { useRouter } from "next/navigation"
+import { useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { useSearchStore } from "@/src/features/search"
+import { useIdentity } from "@/src/hooks/use-identity"
+import { signOutOrcid } from "@/src/features/auth/utils/sign-out-orcid"
 
 export function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
   const { open } = useSearchStore()
+  const router = useRouter()
+  const queryClient = useQueryClient()
+  // Public (ORCID) identity only: the admin session is not queried here, so
+  // anonymous page views make no 401 call and the two identities stay apart (#260).
+  const { data: identity, orcidAvailable } = useIdentity()
+  const signedIn = identity?.authenticated === true
+
+  const handleSignOut = async () => {
+    setSigningOut(true)
+    const ok = await signOutOrcid()
+    setSigningOut(false)
+    if (!ok) {
+      toast.error("Could not sign you out. Please try again.")
+      return
+    }
+    await queryClient.invalidateQueries()
+    router.refresh()
+  }
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -81,9 +105,29 @@ export function Navbar() {
             <LanguageSwitcher />
           </div>
           <ThemeToggle />
-          <Button size="sm" asChild className="hidden md:flex">
-            <Link href="/register">Register</Link>
-          </Button>
+          <div className="hidden md:flex items-center gap-2">
+            {signedIn ? (
+              <>
+                <Button size="sm" variant="outline" asChild>
+                  <Link href="/account/profile">My account</Link>
+                </Button>
+                <Button size="sm" variant="ghost" onClick={handleSignOut} disabled={signingOut}>
+                  Sign out
+                </Button>
+              </>
+            ) : (
+              <>
+                {orcidAvailable && (
+                  <Button size="sm" variant="ghost" asChild>
+                    <Link href="/account/profile">Sign in</Link>
+                  </Button>
+                )}
+                <Button size="sm" asChild>
+                  <Link href="/register">Register</Link>
+                </Button>
+              </>
+            )}
+          </div>
 
           {/* Mobile Menu Toggle */}
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setIsMenuOpen(!isMenuOpen)}>
@@ -128,9 +172,27 @@ export function Navbar() {
               Contact
             </Link>
             <div className="flex gap-2 pt-2">
-              <Button size="sm" className="flex-1" asChild>
-                <Link href="/register">Register</Link>
-              </Button>
+              {signedIn ? (
+                <>
+                  <Button size="sm" variant="outline" className="flex-1" asChild>
+                    <Link href="/account/profile" onClick={() => setIsMenuOpen(false)}>My account</Link>
+                  </Button>
+                  <Button size="sm" variant="ghost" className="flex-1" onClick={handleSignOut} disabled={signingOut}>
+                    Sign out
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {orcidAvailable && (
+                    <Button size="sm" variant="outline" className="flex-1" asChild>
+                      <Link href="/account/profile" onClick={() => setIsMenuOpen(false)}>Sign in</Link>
+                    </Button>
+                  )}
+                  <Button size="sm" className="flex-1" asChild>
+                    <Link href="/register" onClick={() => setIsMenuOpen(false)}>Register</Link>
+                  </Button>
+                </>
+              )}
             </div>
           </nav>
         </div>
