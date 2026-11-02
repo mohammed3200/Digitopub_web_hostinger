@@ -3,6 +3,7 @@
 import { useId } from "react"
 import { cn } from "@/src/lib/utils"
 import { normalizeCitationDoi, useCitationCount } from "@/src/features/metrics/api/use-citation-counts"
+import { DimensionsBadge } from "@/components/dimensions-badge"
 
 interface CitationBadgeProps {
   doi: string | null | undefined
@@ -17,7 +18,24 @@ const SIZES = {
 
 const SOURCE_LABEL = { crossref: "Crossref", openalex: "OpenAlex" } as const
 
-export function CitationBadge({ doi, size = "sm", className }: CitationBadgeProps) {
+/**
+ * Official Dimensions badges (#258) instead of our hexagon. Off until
+ * Digital Science licenses DigitoPub as a publisher; inlined at build time,
+ * so turning it on is an env change plus a redeploy.
+ */
+export const DIMENSIONS_BADGES_ENABLED = process.env.NEXT_PUBLIC_DIMENSIONS_BADGES === "true"
+
+export function CitationBadge(props: CitationBadgeProps) {
+  if (DIMENSIONS_BADGES_ENABLED) {
+    const doi = normalizeCitationDoi(props.doi)
+    if (!doi) return null
+    return <DimensionsBadge doi={doi} badgeStyle={props.size === "md" ? "medium_circle" : "small_circle"} className={props.className} />
+  }
+  return <HexagonCitationBadge {...props} />
+}
+
+/** Our own badge, filled daily from Crossref and OpenAlex (#232). */
+function HexagonCitationBadge({ doi, size = "sm", className }: CitationBadgeProps) {
   const gradientId = useId()
   const normalized = normalizeCitationDoi(doi)
   const { data, isLoading } = useCitationCount(doi)

@@ -5,7 +5,7 @@ import { useState } from "react"
 import type { ArticleDetail } from "@/src/features/journals"
 import { CitationBox } from "./citation-box"
 import { Button } from "@/components/ui/button"
-import { CitationBadge } from "@/components/citation-badge"
+import { CitationBadge, DIMENSIONS_BADGES_ENABLED } from "@/components/citation-badge"
 
 interface ArticleSidebarProps {
   article: ArticleDetail
@@ -112,10 +112,12 @@ export function ArticleSidebar({ article }: ArticleSidebarProps) {
       {/* Times cited */}
       {article.doi && (
         <div className="rounded-xl border border-border/60 bg-card p-5 space-y-3 shadow-sm">
-          <h3 className="font-semibold text-base">Citations</h3>
+          <h3 className="font-semibold text-base">Citation Metrics</h3>
           <CitationBadge doi={article.doi} size="md" />
           <p className="text-xs text-muted-foreground">
-            Times cited, from Crossref and OpenAlex. Updated daily.
+            {DIMENSIONS_BADGES_ENABLED
+              ? "Citation data from Dimensions."
+              : "Times cited, from Crossref and OpenAlex. Updated daily."}
           </p>
         </div>
       )}
