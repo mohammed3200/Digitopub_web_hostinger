@@ -234,7 +234,7 @@ export function resolveUserBridgeUrl(baseUrl = process.env.OJS_BASE_URL?.replace
 
 export type UserBridgeResult =
     | { ok: true; status: number; data: Record<string, unknown> }
-    | { ok: false; status: number | null; error: string; retryable: boolean };
+    | { ok: false; status: number | null; error: string; retryable: boolean; code?: string; data?: Record<string, unknown> };
 
 /**
  * POST one action to the OJS user bridge, once, with a timeout. Retrying is
@@ -290,7 +290,9 @@ export async function postToUserBridge(body: Record<string, unknown>, timeoutMs 
         const error = typeof data.error === "string" ? data.error : `HTTP ${response.status}`;
         const s = response.status;
         const retryable = s >= 500 || s === 401 || s === 403 || s === 408 || s === 429 || response.ok;
-        return { ok: false, status: s, error, retryable };
+        // The bridge's machine-readable reason, e.g. "email_in_use" (#233).
+        const code = typeof data.code === "string" ? data.code : undefined;
+        return { ok: false, status: s, error, retryable, ...(code ? { code, data } : {}) };
     } catch (error) {
         const err = error as Error;
         const message = err.name === "AbortError" ? `OJS bridge timed out after ${timeoutMs} ms` : err.message;

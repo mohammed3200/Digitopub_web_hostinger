@@ -1,7 +1,9 @@
 "use client"
 
 import type { ColumnDef } from "@tanstack/react-table"
+import Link from "next/link"
 import { Users } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { DataTable, sortableHeader } from "@/components/data-table/data-table"
 import type { CsvColumn } from "@/components/data-table/csv-export"
 import { formatDate } from "@/src/lib/utils"
@@ -39,6 +41,16 @@ const columns: ColumnDef<AuthorRow, unknown>[] = [
     accessorKey: "latestSubmission",
     header: sortableHeader<AuthorRow>("Latest Submission"),
     cell: ({ row }) => formatDate(row.original.latestSubmission),
+  },
+  {
+    id: "actions",
+    header: "",
+    enableSorting: false,
+    cell: ({ row }) => (
+      <Button asChild variant="outline" size="sm">
+        <Link href={`/admin/authors/edit?email=${encodeURIComponent(row.original.email)}`}>Edit</Link>
+      </Button>
+    ),
   },
 ]
 

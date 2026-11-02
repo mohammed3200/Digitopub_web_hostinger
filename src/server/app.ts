@@ -22,6 +22,7 @@ import { notificationsRouter } from "@/src/features/notifications/server"
 import { notificationsPublicRouter } from "@/src/server/routes/notifications-public"
 import { notificationsCronRouter } from "@/src/features/notifications/server/cron-route"
 import { opsRouter } from "@/src/server/routes/ops"
+import { authorProfileRouter } from "@/src/features/author-profile/server/route"
 
 const apiApp = new Hono()
     .route("/journals", journalRouter)
@@ -53,6 +54,8 @@ const apiApp = new Hono()
     .route("/notifications", notificationsRouter)
     // CRON_SECRET-protected diagnostics (#194).
     .route("/ops", opsRouter)
+    // Admin editing of author name/email/ORCID in OJS (#233).
+    .route("/author-profile", authorProfileRouter)
 
 
 const app = new Hono().basePath("/api")

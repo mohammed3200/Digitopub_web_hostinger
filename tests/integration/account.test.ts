@@ -6,6 +6,7 @@ const hoisted = vi.hoisted(() => ({
     userMetricsDeleteMany: vi.fn(),
     userOrcidLinkDeleteMany: vi.fn(),
     notificationSubscriberDeleteMany: vi.fn(),
+    personEmailChangeDeleteMany: vi.fn(),
     revokedOrcidUpsert: vi.fn(),
     revokedOrcidFindUnique: vi.fn(async () => null),
     transaction: vi.fn(),
@@ -123,6 +124,7 @@ describe("/api/account", () => {
                     hoisted.userMetricsDeleteMany.mockResolvedValue({ count: 1 })
                     hoisted.userOrcidLinkDeleteMany.mockResolvedValue({ count: 1 })
                     hoisted.notificationSubscriberDeleteMany.mockResolvedValue({ count: 1 })
+                    hoisted.personEmailChangeDeleteMany.mockResolvedValue({ count: 2 })
                     hoisted.revokedOrcidUpsert.mockResolvedValue({
                         orcid: ORCID,
                         revoked_at: new Date(),
@@ -133,6 +135,7 @@ describe("/api/account", () => {
                         userMetrics: { deleteMany: hoisted.userMetricsDeleteMany },
                         userOrcidLink: { deleteMany: hoisted.userOrcidLinkDeleteMany },
                         notificationSubscriber: { deleteMany: hoisted.notificationSubscriberDeleteMany },
+                        personEmailChange: { deleteMany: hoisted.personEmailChangeDeleteMany },
                         revokedOrcid: { upsert: hoisted.revokedOrcidUpsert },
                     } as never)
                 }
@@ -149,6 +152,9 @@ describe("/api/account", () => {
             expect(hoisted.notificationSubscriberDeleteMany).toHaveBeenCalledWith({
                 where: { OR: [{ orcid: ORCID }, { email_hash: EMAIL_HASH }] },
             })
+            // Pending author email changes this ORCID iD asked for (#233).
+            expect(body.deleted.person_email_change_rows).toBe(2)
+            expect(hoisted.personEmailChangeDeleteMany).toHaveBeenCalledWith({ where: { requested_by_orcid: ORCID } })
             const setCookie = res.headers.get("Set-Cookie") || ""
             expect(setCookie).toContain(`${IDENTITY_COOKIE_NAME}=`)
             expect(setCookie).toContain("Max-Age=0")
