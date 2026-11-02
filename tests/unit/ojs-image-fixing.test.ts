@@ -33,9 +33,12 @@ describe("Host Classification Module", () => {
 
   it("includes env overrides in getAllOjsHostnames", () => {
     vi.stubEnv("OJS_BASE_URL", "https://custom-ojs.example.org")
-    const hosts = getAllOjsHostnames()
-    expect(hosts.has("custom-ojs.example.org")).toBe(true)
-    vi.unstubAllEnvs()
+    try {
+      const hosts = getAllOjsHostnames()
+      expect(hosts.has("custom-ojs.example.org")).toBe(true)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })
 
@@ -94,4 +97,31 @@ describe("ojs-mappers thumbnail URL builder", () => {
     expect(mapped.thumbnail_url).toBe("https://journals.digitopub.com/public/journals/10/cover_issue_10_en.png")
     expect(mapped.thumbnail_url).not.toContain("/ojs/public/")
   })
+
+  // #260: a trailing slash used to hide the /ojs suffix from the strip.
+  it.each(["https://journals.digitopub.com/ojs/", "https://journals.digitopub.com/ojs//", "https://journals.digitopub.com/"])(
+    "builds the same URL for base %s",
+    (baseUrl) => {
+      const mapped = mapOjsJournalRow(row(), baseUrl)
+      expect(mapped.thumbnail_url).toBe("https://journals.digitopub.com/public/journals/10/cover_issue_10_en.png")
+    },
+  )
 })
+
+function row() {
+  return {
+    journal_id: 10,
+    path: "my-journal",
+    primary_locale: "en_US",
+    enabled: 1,
+    name: "My Journal",
+    description: "Test description",
+    thumbnail: '{"en_US":{"name":"cover_issue_10_en.png"}}',
+    issn: null,
+    e_issn: null,
+    publisher: null,
+    abbreviation: null,
+    contact_name: null,
+    country: null,
+  }
+}
