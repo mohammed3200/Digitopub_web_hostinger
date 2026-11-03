@@ -167,7 +167,10 @@ export function ArticleItem({ article }: ArticleItemProps) {
                 <div className="rounded-xl bg-muted/40 p-4 border border-border/30 overflow-y-auto max-h-[350px] scrollbar-thin">
                   <div
                     className="text-sm leading-relaxed text-muted-foreground prose prose-sm max-w-none dark:prose-invert"
-                    dangerouslySetInnerHTML={{ __html: sanitizeAbstract(article.abstract) }}
+                    // DOMPurify needs a DOM, so the abstract is sanitized only once the reader
+                    // expands it (browser-only state); on the server it threw and the issue
+                    // page's article list fell back to client rendering (#265).
+                    dangerouslySetInnerHTML={{ __html: isExpanded ? sanitizeAbstract(article.abstract) : "" }}
                   />
                 </div>
               </div>
