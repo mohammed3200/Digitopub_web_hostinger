@@ -178,16 +178,6 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
                         Affiliation not provided
                       </span>
                     )}
-                    {orcidUrl && (
-                      <a
-                        href={orcidUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-primary hover:underline w-fit break-all"
-                      >
-                        {orcidUrl}
-                      </a>
-                    )}
                   </div>
                 </li>
               )
