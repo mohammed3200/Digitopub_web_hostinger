@@ -13,6 +13,8 @@ import { useParams } from "next/navigation"
 import DOMPurify from "dompurify"
 
 import type { CurrentIssueArticle, CurrentIssueAuthor } from "@/src/features/journals"
+import { OrcidIcon } from "@/components/orcid-icon"
+import { normalizeOrcidId, orcidProfileUrl } from "@/src/lib/orcid"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CitationBadge } from "@/components/citation-badge"
@@ -243,10 +245,25 @@ function AuthorList({ authors }: AuthorListProps) {
         {named.map((author) => {
           const name = `${author.givenName || ""} ${author.familyName || ""}`.trim()
           const key = `${author.givenName ?? ""}-${author.familyName ?? ""}`
+          const orcidId = normalizeOrcidId(author.orcid)
           return (
             <div key={key} className="flex flex-col min-w-0">
-              <span className="text-sm font-semibold text-foreground/80 leading-snug truncate">
-                {name}
+              <span className="flex items-center gap-1.5 min-w-0">
+                <span className="text-sm font-semibold text-foreground/80 leading-snug truncate">
+                  {name}
+                </span>
+                {orcidId && (
+                  <a
+                    href={orcidProfileUrl(orcidId)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`ORCID profile of ${name}`}
+                    title="ORCID profile"
+                    className="inline-flex shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A6CE39]/60"
+                  >
+                    <OrcidIcon className="h-3.5 w-3.5" />
+                  </a>
+                )}
               </span>
               {author.affiliation && (
                 <span className="text-[11px] text-muted-foreground leading-tight line-clamp-1">

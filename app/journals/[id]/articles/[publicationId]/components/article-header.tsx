@@ -2,9 +2,11 @@
 
 import Link from "next/link"
 import { OjsImage } from "@/src/features/ojs/components/ojs-image"
-import { ChevronRight, Calendar, ExternalLink, FileText, BookOpen, Hash } from "lucide-react"
+import { ChevronRight, Calendar, FileText, BookOpen, Hash } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { DoiCopyButton } from "./doi-copy-button"
+import { OrcidIcon } from "@/components/orcid-icon"
+import { normalizeOrcidId, orcidProfileUrl } from "@/src/lib/orcid"
 import type { ArticleDetail } from "@/src/features/journals"
 
 interface ArticleHeaderProps {
@@ -143,9 +145,8 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
             {article.authors.map((author) => {
               const fullName = `${author.givenName || ""} ${author.familyName || ""}`.trim() || "Unknown Author"
               const initials = `${(author.givenName || "?").charAt(0)}${(author.familyName || "").charAt(0)}`.toUpperCase()
-              const orcidId =
-                author.orcid?.split("/").filter(Boolean).pop()?.trim() || ""
-              const hasValidOrcid = /^(\d{4}-){3}\d{3}[\dX]$/.test(orcidId)
+              const orcidId = normalizeOrcidId(author.orcid)
+              const orcidUrl = orcidId ? orcidProfileUrl(orcidId) : null
 
               return (
                 <li key={author.orcid ?? fullName} className="flex gap-3 group">
@@ -155,6 +156,18 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
                   <div className="flex flex-col gap-1 min-w-0">
                     <span className="font-bold text-foreground text-base leading-tight">
                       {fullName}
+                      {orcidUrl && (
+                        <a
+                          href={orcidUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`ORCID profile of ${fullName}`}
+                          title="ORCID profile"
+                          className="ml-1.5 inline-flex align-[-2px] rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A6CE39]/60"
+                        >
+                          <OrcidIcon />
+                        </a>
+                      )}
                     </span>
                     {author.affiliation ? (
                       <span className="text-xs text-muted-foreground leading-relaxed font-medium">
@@ -165,15 +178,14 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
                         Affiliation not provided
                       </span>
                     )}
-                    {hasValidOrcid && (
+                    {orcidUrl && (
                       <a
-                        href={`https://orcid.org/${orcidId}`}
+                        href={orcidUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[10px] text-primary hover:underline inline-flex items-center gap-1 mt-1 font-bold uppercase tracking-wider w-fit"
+                        className="text-xs text-primary hover:underline w-fit break-all"
                       >
-                        ORCID
-                        <ExternalLink className="h-2.5 w-2.5" />
+                        {orcidUrl}
                       </a>
                     )}
                   </div>
