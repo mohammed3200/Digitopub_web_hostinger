@@ -159,6 +159,10 @@ export async function fetchArticlesWithAuthors(
           newAffiliationRows,
           legacySettings: settings,
         }),
+        orcid: pickLocalized(
+          settings.filter((s) => s.setting_name === "orcid"),
+          primaryLocale
+        ),
       })
       authorsByPub.set(row.publication_id, existing)
     }

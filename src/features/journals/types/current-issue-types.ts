@@ -13,6 +13,8 @@ export interface CurrentIssueAuthor {
   givenName: string | null
   familyName: string | null
   affiliation?: string | null
+  /** Byline ORCID iD as stored in OJS (bare or orcid.org URL); see normalizeOrcidId. */
+  orcid?: string | null
 }
 
 export interface CurrentIssueArticle {
