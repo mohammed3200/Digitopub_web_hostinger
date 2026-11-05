@@ -4,7 +4,7 @@ import { test, expect, type Page } from "@playwright/test"
  * Phone-width layout guard (#269). The page shell hides horizontal overflow
  * (`main { overflow-x: clip }`, `body { overflow-x: hidden }`), so anything
  * wider than the viewport is silently cut off rather than scrollable. These
- * checks catch that: nothing inside <main> may extend past the viewport.
+ * checks catch that: no page content may extend past the viewport.
  *
  * Journal pages come from OJS data, which CI's empty DB lacks — the journal
  * checks skip there. Run against a site with data via
@@ -20,17 +20,26 @@ async function overflowingElements(page: Page): Promise<string[]> {
         // overflow on <main>/<body> (or an overflow-hidden card) and lost.
         const insideFittingScroller = (el: Element) => {
             if (el.closest('[aria-roledescription="carousel"]')) return true
-            for (let a = el.parentElement; a && a.tagName !== "MAIN"; a = a.parentElement) {
-                const ox = getComputedStyle(a).overflowX
+            for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+                const cs = getComputedStyle(a)
+                // Fixed layers (off-canvas menus, toasts) are not page content.
+                if (cs.position === "fixed") return true
+                const ox = cs.overflowX
                 if ((ox === "auto" || ox === "scroll") && a.getBoundingClientRect().right <= limit) {
                     return true
                 }
             }
             return false
         }
-        const wide = [...document.querySelectorAll("main *")].filter((el) => {
+        // Whole body: the issue and article pages have no <main>.
+        const wide = [...document.querySelectorAll("body *")].filter((el) => {
             const r = el.getBoundingClientRect()
-            return r.width > 0 && r.right > limit && !insideFittingScroller(el)
+            return (
+                r.width > 0 &&
+                r.right > limit &&
+                getComputedStyle(el).position !== "fixed" &&
+                !insideFittingScroller(el)
+            )
         })
         // Report only the outermost offenders, not every descendant.
         return wide
@@ -49,7 +58,7 @@ async function expectFitsViewport(page: Page, path: string, readySelector?: stri
     // <main>, no <h1>), and measuring that would hide the bug.
     const response = await page.goto(path, { waitUntil: "domcontentloaded" })
     expect(response?.status(), path).toBeLessThan(400)
-    await expect(page.locator("main h1").first()).toBeVisible({ timeout: 20_000 })
+    await expect(page.locator("h1").first()).toBeVisible({ timeout: 20_000 })
     if (readySelector) {
         // Optional: an empty journal legitimately has no such element.
         await page.locator(readySelector).first().waitFor({ timeout: 15_000 }).catch(() => {})
@@ -71,15 +80,21 @@ test.describe("phone layout", () => {
 
     test("journal detail, issue and article pages fit the viewport", async ({ page }) => {
         test.setTimeout(180_000)
-        await page.goto("/journals", { waitUntil: "domcontentloaded" })
-        // The listing renders client-side; give it a moment before deciding
-        // this environment has no journals.
-        await page
-            .locator('a[href^="/journals/"]')
-            .first()
-            .waitFor({ timeout: 15_000 })
-            .catch(() => {})
-        const journal = await firstHref(page, /^\/journals\/[^/?#]+$/)
+        // E2E_JOURNAL (an OJS path, e.g. "ojbr") pins a journal that has
+        // published issues, and then requires the issue and article checks.
+        const pinned = process.env.E2E_JOURNAL
+        let journal = pinned ? `/journals/${pinned}` : null
+        if (!journal) {
+            await page.goto("/journals", { waitUntil: "domcontentloaded" })
+            // The listing renders client-side; give it a moment before deciding
+            // this environment has no journals.
+            await page
+                .locator('a[href^="/journals/"]')
+                .first()
+                .waitFor({ timeout: 15_000 })
+                .catch(() => {})
+            journal = await firstHref(page, /^\/journals\/[^/?#]+$/)
+        }
         test.skip(!journal, "no journals in this environment")
 
         for (const path of [journal!, `${journal}/author-guidelines`, `${journal}/policies`]) {
@@ -100,6 +115,10 @@ test.describe("phone layout", () => {
         const issue = await firstHref(page, /\/issues\/\d+\/\d+$/)
 
         test.info().annotations.push({ type: "pages", description: `issue=${issue ?? "none"} article=${article ?? "none"}` })
+        if (pinned) {
+            expect(issue, `no issue link on ${journal}/archive`).not.toBeNull()
+            expect(article, `no article link on ${journal}/current-issue`).not.toBeNull()
+        }
         if (issue) await expectFitsViewport(page, issue)
         if (article) await expectFitsViewport(page, article)
     })
