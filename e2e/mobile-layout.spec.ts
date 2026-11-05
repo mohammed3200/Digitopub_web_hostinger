@@ -14,12 +14,15 @@ import { test, expect, type Page } from "@playwright/test"
 async function overflowingElements(page: Page): Promise<string[]> {
     return page.evaluate(() => {
         const limit = window.innerWidth + 1
-        // Content inside a container that fits the viewport and scrolls or
-        // clips on purpose (tab bars, pill rows, carousels) is fine. Only the
-        // page-level clip on <main>/<body> loses content.
+        // Content inside a horizontal scroller that fits the viewport (tab
+        // bars, pill rows) is reachable, and carousels hide off-screen slides
+        // on purpose. Anything else past the edge is clipped by the page-level
+        // overflow on <main>/<body> (or an overflow-hidden card) and lost.
         const insideFittingScroller = (el: Element) => {
+            if (el.closest('[aria-roledescription="carousel"]')) return true
             for (let a = el.parentElement; a && a.tagName !== "MAIN"; a = a.parentElement) {
-                if (getComputedStyle(a).overflowX !== "visible" && a.getBoundingClientRect().right <= limit) {
+                const ox = getComputedStyle(a).overflowX
+                if ((ox === "auto" || ox === "scroll") && a.getBoundingClientRect().right <= limit) {
                     return true
                 }
             }
@@ -40,13 +43,17 @@ async function overflowingElements(page: Page): Promise<string[]> {
     })
 }
 
-async function expectFitsViewport(page: Page, path: string) {
+async function expectFitsViewport(page: Page, path: string, readySelector?: string) {
     // "load" can stall on slow third-party resources, so wait for the real
     // content instead: these pages first stream a loading skeleton (its own
     // <main>, no <h1>), and measuring that would hide the bug.
     const response = await page.goto(path, { waitUntil: "domcontentloaded" })
     expect(response?.status(), path).toBeLessThan(400)
     await expect(page.locator("main h1").first()).toBeVisible({ timeout: 20_000 })
+    if (readySelector) {
+        // Optional: an empty journal legitimately has no such element.
+        await page.locator(readySelector).first().waitFor({ timeout: 15_000 }).catch(() => {})
+    }
     expect(await overflowingElements(page), `overflow on ${path}`).toEqual([])
 }
 
@@ -75,18 +82,24 @@ test.describe("phone layout", () => {
         const journal = await firstHref(page, /^\/journals\/[^/?#]+$/)
         test.skip(!journal, "no journals in this environment")
 
-        for (const path of [journal!, `${journal}/author-guidelines`, `${journal}/archive`, `${journal}/policies`]) {
+        for (const path of [journal!, `${journal}/author-guidelines`, `${journal}/policies`]) {
             await expectFitsViewport(page, path)
             const tablist = page.locator("[role=tablist]").first()
             const width = await tablist.evaluate((el) => el.clientWidth)
             expect(width, `tablist width on ${path}`).toBeLessThanOrEqual(page.viewportSize()!.width)
         }
 
-        await expectFitsViewport(page, `${journal}/current-issue`)
+        // Current Issue and Archive fetch their lists client-side: wait for the
+        // first article / issue link so the check measures the real list, not
+        // the loading skeleton. A journal with no issues yet is reported, not
+        // silently skipped.
+        await expectFitsViewport(page, `${journal}/current-issue`, 'a[href*="/articles/"]')
         const article = await firstHref(page, /\/articles\/\d+$/)
 
-        await page.goto(`${journal}/archive`, { waitUntil: "domcontentloaded" })
+        await expectFitsViewport(page, `${journal}/archive`, 'a[href*="/issues/"]')
         const issue = await firstHref(page, /\/issues\/\d+\/\d+$/)
+
+        test.info().annotations.push({ type: "pages", description: `issue=${issue ?? "none"} article=${article ?? "none"}` })
         if (issue) await expectFitsViewport(page, issue)
         if (article) await expectFitsViewport(page, article)
     })
