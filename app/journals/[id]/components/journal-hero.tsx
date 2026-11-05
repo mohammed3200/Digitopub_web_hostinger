@@ -42,7 +42,7 @@ export function JournalHero({ journal, submissionUrl }: JournalHeroProps) {
       </div>
 
       <div className="container relative z-10 mx-auto px-4 md:px-6 py-12 md:py-16">
-        <div className="grid gap-10 md:grid-cols-[240px_1fr] md:items-start lg:gap-16">
+        <div className="grid grid-cols-1 gap-10 md:grid-cols-[240px_minmax(0,1fr)] md:items-start lg:gap-16">
           {/* Cover Image */}
           <div className="mx-auto w-40 md:mx-0 md:w-48 lg:w-56 flex-shrink-0">
             <div className="relative group">

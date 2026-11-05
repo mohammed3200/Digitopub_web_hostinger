@@ -22,7 +22,7 @@ export function JournalDetailsGrid({ journal }: JournalDetailsGridProps) {
           </div>
           <h2 className="text-xl font-bold">Journal Details</h2>
         </div>
-        <div className="grid gap-y-5 text-sm sm:grid-cols-2 sm:gap-x-8">
+        <div className="grid grid-cols-1 gap-y-5 text-sm sm:grid-cols-2 sm:gap-x-8">
           {details.map((item) => (
             <div
               key={item.label}

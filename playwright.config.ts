@@ -34,8 +34,17 @@ export default defineConfig({
             testMatch: /public\.spec\.ts/,
             use: { ...devices["Desktop Chrome"] },
         },
+        {
+            // Phone-width layout guard (#269). Pixel 7 is Chromium-based, so
+            // CI's chromium-only install covers it; viewport pinned to 375.
+            name: "public-mobile",
+            testMatch: /mobile-layout\.spec\.ts/,
+            use: { ...devices["Pixel 7"], viewport: { width: 375, height: 812 } },
+        },
     ],
-    webServer: {
+    // With E2E_BASE_URL set (e.g. a Hostinger PR preview) test that site
+    // instead of starting a local server.
+    webServer: process.env.E2E_BASE_URL ? undefined : {
         command: "bun run start",
         url: "http://localhost:3000",
         reuseExistingServer: !process.env.CI,

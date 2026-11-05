@@ -159,7 +159,7 @@ export default async function IssueDetailPage({ params }: PageProps) {
           </div>
 
           <AudioPlayerProvider>
-            <div className="grid gap-6">
+            <div className="grid grid-cols-1 gap-6">
               {issue.articles.map((article: CurrentIssueArticle) => (
                 <ArticleItem key={article.publicationId} article={article} />
               ))}

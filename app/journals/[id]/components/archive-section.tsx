@@ -53,7 +53,7 @@ export function ArchiveSection({ journalId }: ArchiveSectionProps) {
       </div>
 
       {/* Grid of Issue Cards */}
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {archiveIssues.map((issue) => (
           <ArchiveIssueCard
             key={issue.issueId}
