@@ -73,6 +73,23 @@ async function firstHref(page: Page, pattern: RegExp): Promise<string | null> {
     return hrefs.find((h) => pattern.test(h)) ?? null
 }
 
+/**
+ * The journal to test. E2E_JOURNAL (an OJS path, e.g. "ojbr") pins one that
+ * has published issues, and then the issue and article checks are required.
+ */
+async function firstJournal(page: Page): Promise<string | null> {
+    if (process.env.E2E_JOURNAL) return `/journals/${process.env.E2E_JOURNAL}`
+    await page.goto("/journals", { waitUntil: "domcontentloaded" })
+    // The listing renders client-side; give it a moment before deciding
+    // this environment has no journals.
+    await page
+        .locator('a[href^="/journals/"]')
+        .first()
+        .waitFor({ timeout: 15_000 })
+        .catch(() => {})
+    return firstHref(page, /^\/journals\/[^/?#]+$/)
+}
+
 test.describe("phone layout", () => {
     test("journals listing fits the viewport", async ({ page }) => {
         await expectFitsViewport(page, "/journals")
@@ -80,21 +97,8 @@ test.describe("phone layout", () => {
 
     test("journal detail, issue and article pages fit the viewport", async ({ page }) => {
         test.setTimeout(180_000)
-        // E2E_JOURNAL (an OJS path, e.g. "ojbr") pins a journal that has
-        // published issues, and then requires the issue and article checks.
         const pinned = process.env.E2E_JOURNAL
-        let journal = pinned ? `/journals/${pinned}` : null
-        if (!journal) {
-            await page.goto("/journals", { waitUntil: "domcontentloaded" })
-            // The listing renders client-side; give it a moment before deciding
-            // this environment has no journals.
-            await page
-                .locator('a[href^="/journals/"]')
-                .first()
-                .waitFor({ timeout: 15_000 })
-                .catch(() => {})
-            journal = await firstHref(page, /^\/journals\/[^/?#]+$/)
-        }
+        const journal = await firstJournal(page)
         test.skip(!journal, "no journals in this environment")
 
         for (const path of [journal!, `${journal}/author-guidelines`, `${journal}/policies`]) {
@@ -121,5 +125,32 @@ test.describe("phone layout", () => {
         }
         if (issue) await expectFitsViewport(page, issue)
         if (article) await expectFitsViewport(page, article)
+    })
+
+    test("journal tab bar is on the first screen and shows the active tab (#270)", async ({ page }) => {
+        test.setTimeout(90_000)
+        const journal = await firstJournal(page)
+        test.skip(!journal, "no journals in this environment")
+
+        await page.goto(journal!, { waitUntil: "domcontentloaded" })
+        const tablist = page.locator("[role=tablist]").first()
+        await expect(tablist).toBeVisible({ timeout: 30_000 })
+        const top = await tablist.evaluate((el) => el.getBoundingClientRect().top + window.scrollY)
+        expect(top, "tab bar top (px) at 375x812").toBeLessThanOrEqual(600)
+
+        // Policies is the last tab, off-screen at 375px unless the strip scrolls to it.
+        await page.goto(`${journal}/policies`, { waitUntil: "domcontentloaded" })
+        await expect(tablist).toBeVisible({ timeout: 30_000 })
+        const active = tablist.locator('[role=tab][data-state="active"]')
+        await expect(active).toHaveText(/Policies/)
+        await expect
+            .poll(() =>
+                active.evaluate((tab) => {
+                    const t = tab.getBoundingClientRect()
+                    const l = tab.parentElement!.getBoundingClientRect()
+                    return t.left >= l.left - 1 && t.right <= l.right + 1
+                }),
+            )
+            .toBe(true)
     })
 })

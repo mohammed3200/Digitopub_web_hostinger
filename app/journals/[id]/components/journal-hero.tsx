@@ -41,10 +41,10 @@ export function JournalHero({ journal, submissionUrl }: JournalHeroProps) {
         />
       </div>
 
-      <div className="container relative z-10 mx-auto px-4 md:px-6 py-12 md:py-16">
-        <div className="grid grid-cols-1 gap-10 md:grid-cols-[240px_minmax(0,1fr)] md:items-start lg:gap-16">
+      <div className="container relative z-10 mx-auto px-4 md:px-6 py-8 md:py-16">
+        <div className="grid grid-cols-1 gap-6 md:gap-10 md:grid-cols-[240px_minmax(0,1fr)] md:items-start lg:gap-16">
           {/* Cover Image */}
-          <div className="mx-auto w-40 md:mx-0 md:w-48 lg:w-56 flex-shrink-0">
+          <div className="mx-auto w-24 md:mx-0 md:w-48 lg:w-56 flex-shrink-0">
             <div className="relative group">
               <div className="absolute -inset-1 bg-gradient-to-br from-primary/30 via-primary/10 to-transparent rounded-xl blur-lg opacity-50 group-hover:opacity-75 transition-opacity duration-500" />
               <div className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10">
@@ -61,7 +61,7 @@ export function JournalHero({ journal, submissionUrl }: JournalHeroProps) {
           </div>
 
           {/* Title + Metadata + Actions */}
-          <div className="space-y-6">
+          <div className="space-y-4 md:space-y-6">
             {/* Badges */}
             <div className="flex flex-wrap gap-2.5">
               {journal.field && (

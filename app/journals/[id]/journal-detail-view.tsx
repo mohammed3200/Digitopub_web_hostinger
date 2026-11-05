@@ -36,10 +36,11 @@ import { JournalHero } from "@/app/journals/[id]/components/journal-hero"
 import { AboutTabContent } from "@/app/journals/[id]/components/about-tab-content"
 import { AuthorGuidelinesTab } from "@/app/journals/[id]/components/author-guidelines-tab"
 import { JournalSidebar } from "@/app/journals/[id]/components/journal-sidebar"
+import { useTabStrip } from "@/app/journals/[id]/components/use-tab-strip"
 import { type JournalDetailTab, journalTabPath } from "@/app/journals/[id]/tab-config"
 
 const TAB_TRIGGER_CLASSES =
-  "rounded-none border-b-2 border-transparent px-3 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-muted-foreground whitespace-nowrap data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
+  "flex-none rounded-none border-b-2 border-transparent px-3 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-muted-foreground whitespace-nowrap data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
 
 function PageShell({ children }: { children: React.ReactNode }) {
   return (
@@ -90,6 +91,12 @@ export function JournalDetailView({
     activeTab,
     isReady: !isLoading && !!journal,
   })
+
+  const {
+    listRef: tabListRef,
+    canScrollRight: tabsCanScrollRight,
+    onScroll: onTabStripScroll,
+  } = useTabStrip(activeTab, !isLoading && !!journal)
 
   if (isLoading) {
     return (
@@ -142,33 +149,45 @@ export function JournalDetailView({
       />
 
       {/* Content Section */}
-      <section className="py-10 md:py-14 lg:py-16">
+      <section className="pt-6 pb-10 md:py-14 lg:py-16">
         <div className="container mx-auto px-4 md:px-6">
           <div className="grid grid-cols-1 gap-10 lg:grid-cols-3">
             <div className="lg:col-span-2 space-y-8 min-w-0">
               <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-                <TabsList className="inline-flex h-auto w-full justify-start gap-1 bg-transparent p-0 border-b border-border rounded-none overflow-x-auto">
-                  <TabsTrigger value="about" className={TAB_TRIGGER_CLASSES}>
-                    <BookOpen className="mr-2 h-4 w-4" />
-                    About Journal
-                  </TabsTrigger>
-                  <TabsTrigger value="author" className={TAB_TRIGGER_CLASSES}>
-                    <FileText className="mr-2 h-4 w-4" />
-                    Author Guidelines
-                  </TabsTrigger>
-                  <TabsTrigger value="current" className={TAB_TRIGGER_CLASSES}>
-                    <NewspaperIcon className="mr-2 h-4 w-4" />
-                    Current Issue
-                  </TabsTrigger>
-                  <TabsTrigger value="archive" className={TAB_TRIGGER_CLASSES}>
-                    <ArchiveIcon className="mr-2 h-4 w-4" />
-                    Archive
-                  </TabsTrigger>
-                  <TabsTrigger value="policies" className={TAB_TRIGGER_CLASSES}>
-                    <Scale className="mr-2 h-4 w-4" />
-                    Policies
-                  </TabsTrigger>
-                </TabsList>
+                <div className="relative">
+                  <TabsList
+                    ref={tabListRef}
+                    onScroll={onTabStripScroll}
+                    className="relative inline-flex h-auto w-full justify-start gap-1 bg-transparent p-0 border-b border-border rounded-none overflow-x-auto"
+                  >
+                    <TabsTrigger value="about" className={TAB_TRIGGER_CLASSES}>
+                      <BookOpen className="mr-2 h-4 w-4" />
+                      About Journal
+                    </TabsTrigger>
+                    <TabsTrigger value="author" className={TAB_TRIGGER_CLASSES}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Author Guidelines
+                    </TabsTrigger>
+                    <TabsTrigger value="current" className={TAB_TRIGGER_CLASSES}>
+                      <NewspaperIcon className="mr-2 h-4 w-4" />
+                      Current Issue
+                    </TabsTrigger>
+                    <TabsTrigger value="archive" className={TAB_TRIGGER_CLASSES}>
+                      <ArchiveIcon className="mr-2 h-4 w-4" />
+                      Archive
+                    </TabsTrigger>
+                    <TabsTrigger value="policies" className={TAB_TRIGGER_CLASSES}>
+                      <Scale className="mr-2 h-4 w-4" />
+                      Policies
+                    </TabsTrigger>
+                  </TabsList>
+                  {tabsCanScrollRight && (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-background to-transparent"
+                    />
+                  )}
+                </div>
 
                 <TabsContent value="current" className="mt-8">
                   <CurrentIssueSection journalId={id} />
