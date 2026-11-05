@@ -53,7 +53,7 @@ export default function CollapsibleContent({ maxHeight = 300, children, classNam
           aria-expanded={expanded}
           aria-controls={contentId}
           onClick={() => setExpanded(!expanded)}
-          className="mt-2 text-sm font-medium text-primary hover:underline"
+          className="mt-2 inline-flex min-h-6 items-center text-sm font-medium text-primary hover:underline"
         >
           {expanded ? 'Read Less' : 'Read More'}
         </button>
