@@ -49,7 +49,7 @@ export function AimsScopeSection({
       {/* Aims & Scope — split into two branded cards when OJS content has
           distinct headings; fall back to a single combined card otherwise. */}
       {safeAims && safeScope ? (
-        <div className="grid gap-5 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <div className="group relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-primary/[0.03] p-6 sm:p-7 shadow-sm transition hover:shadow-md hover:border-primary/30">
             <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-primary/5 blur-2xl transition-colors group-hover:bg-primary/10" />
             <div className="relative flex items-center gap-3 mb-5">

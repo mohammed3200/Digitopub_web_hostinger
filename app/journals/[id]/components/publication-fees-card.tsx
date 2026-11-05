@@ -57,7 +57,7 @@ export function PublicationFeesCard({
           dangerouslySetInnerHTML={{ __html: safeOjsHtml }}
         />
       ) : anyStructuredFee ? (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {publicationFee > 0 && (
             <div className="rounded-xl border border-border/60 bg-muted/30 p-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary/80 mb-2">
