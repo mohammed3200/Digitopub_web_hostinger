@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { ojsQuery, isOjsConfigured } from "@/src/features/ojs/server/ojs-client"
+import { getOjsPlatformStats } from "@/src/features/ojs/server/ojs-stats-service"
 import { prisma } from "@/src/lib/db/config"
 
 interface StatsData {
@@ -34,7 +35,10 @@ app.get("/", async (c) => {
     const queries = [
       prisma.journal.count(),
       ojsQuery<{ count: number }>("SELECT COUNT(*) as count FROM submissions WHERE status = 3"),
-      ojsQuery<{ count: number }>("SELECT COUNT(*) as count FROM users"),
+      // Researchers: distinct author emails across the surfaced journals, the
+      // same figure as the admin dashboard's "Total Authors" (#273). The OJS
+      // `users` table only holds login accounts, which most co-authors lack.
+      getOjsPlatformStats(),
       ojsQuery<{ count: number }>("SELECT COUNT(DISTINCT country) as count FROM users WHERE country IS NOT NULL AND country != ''")
     ] as const;
 
@@ -55,7 +59,8 @@ app.get("/", async (c) => {
 
     const journalsData = extractNumber(results[0] as PromiseSettledResult<number>);
     const articlesData = extractOjsCount(results[1] as PromiseSettledResult<CountRow[]>);
-    const usersData = extractOjsCount(results[2] as PromiseSettledResult<CountRow[]>);
+    const platformStats = results[2] as PromiseSettledResult<{ totalAuthors: number }>
+    const usersData = platformStats.status === "fulfilled" ? platformStats.value.totalAuthors || 0 : 0;
     const countriesData = extractOjsCount(results[3] as PromiseSettledResult<CountRow[]>);
 
     const data: StatsData = {
