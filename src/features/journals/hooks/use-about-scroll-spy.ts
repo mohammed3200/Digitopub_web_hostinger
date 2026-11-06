@@ -1,7 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect, useRef, type RefObject } from "react"
 import { ABOUT_METADATA } from "@/src/features/journals/about-slugs"
 
 export interface UseAboutScrollSpyOptions {
@@ -21,6 +20,12 @@ export interface UseAboutScrollSpyReturn {
  * Manages deep linking, IntersectionObserver-based scroll-spy, and programmatic
  * smooth scroll for the About Journal subsections.
  * Prevents scroll oscillations (#150) using ref-tracked live slugs and lockouts.
+ *
+ * URL updates use the native History API, never the router (#275): a
+ * router.replace/push is a real navigation into the [...tab] route that
+ * remounts the whole view, so the boards re-render, the page height changes
+ * and the scroll position jumps. Next integrates pushState/replaceState
+ * with usePathname without a server round-trip.
  */
 export function useAboutScrollSpy({
   journalId,
@@ -28,7 +33,6 @@ export function useAboutScrollSpy({
   activeTab,
   isReady,
 }: UseAboutScrollSpyOptions): UseAboutScrollSpyReturn {
-  const router = useRouter()
   const [activeAboutSlug, setActiveAboutSlug] = useState<string | null>(initialAboutSlug)
   const [prevInitialAbout, setPrevInitialAbout] = useState(initialAboutSlug)
   const isProgrammaticScroll = useRef(false)
@@ -127,8 +131,9 @@ export function useAboutScrollSpy({
           if (newSlug !== activeAboutSlugRef.current) {
             activeAboutSlugRef.current = newSlug
             setActiveAboutSlug(newSlug)
-            // Use replace so we don't spam the history stack on scroll
-            router.replace(`/journals/${journalId}/about-journal/${newSlug}`, { scroll: false })
+            // Replace (not push) so scrolling doesn't spam the history
+            // stack; native API so nothing remounts (#275).
+            window.history.replaceState(null, "", aboutPath(journalId, newSlug))
           }
         }
       },
@@ -144,29 +149,35 @@ export function useAboutScrollSpy({
     })
 
     return () => observer.disconnect()
-  }, [activeTab, journalId, router, isReady])
+  }, [activeTab, journalId, isReady])
+
+  // Back/forward between pill-pushed entries: the URL changes but no
+  // navigation happens, so scroll to the section it names ourselves.
+  useEffect(() => {
+    if (activeTab !== "about") return
+    const onPopState = () => {
+      const path = window.location.pathname.replace(/\/+$/, "")
+      const match = path.match(/\/about-journal\/([^/]+)$/)
+      const raw = match ? decodeURIComponent(match[1]) : null
+      const slug = raw && ABOUT_METADATA.some((m) => m.slug === raw) ? raw : null
+      activeAboutSlugRef.current = slug
+      setActiveAboutSlug(slug)
+      if (slug) {
+        scrollToAboutSection(slug, isProgrammaticScroll, scrollResetTimerRef)
+      } else {
+        // Back to the slug-less entry (/journals/{id} or /about-journal).
+        window.scrollTo({ top: 0, behavior: "smooth" })
+      }
+    }
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [activeTab])
 
   const handleAboutPillClick = (slug: string) => {
     activeAboutSlugRef.current = slug
     setActiveAboutSlug(slug)
-    router.push(`/journals/${journalId}/about-journal/${slug}`, { scroll: false })
-
-    const el = document.getElementById(`about-${slug}`)
-    if (el) {
-      isProgrammaticScroll.current = true
-      const yOffset = -140
-      const y = el.getBoundingClientRect().top + window.scrollY + yOffset
-      window.scrollTo({ top: y, behavior: "smooth" })
-
-      // Clear previous timeout and track pill-click reset timer in scrollResetTimerRef
-      if (scrollResetTimerRef.current) {
-        clearTimeout(scrollResetTimerRef.current)
-      }
-      scrollResetTimerRef.current = setTimeout(() => {
-        isProgrammaticScroll.current = false
-        scrollResetTimerRef.current = undefined
-      }, 1000)
-    }
+    window.history.pushState(null, "", aboutPath(journalId, slug))
+    scrollToAboutSection(slug, isProgrammaticScroll, scrollResetTimerRef)
   }
 
   return {
@@ -174,4 +185,31 @@ export function useAboutScrollSpy({
     setActiveAboutSlug,
     handleAboutPillClick,
   }
+}
+
+function aboutPath(journalId: string, slug: string): string {
+  return `/journals/${journalId}/about-journal/${slug}`
+}
+
+/**
+ * Smooth-scroll to an About subsection below the sticky navbar + pills,
+ * holding the scroll-spy off until the scroll has had time to finish (#150).
+ */
+function scrollToAboutSection(
+  slug: string,
+  isProgrammaticScroll: RefObject<boolean>,
+  scrollResetTimerRef: RefObject<ReturnType<typeof setTimeout> | undefined>,
+): void {
+  const el = document.getElementById(`about-${slug}`)
+  if (!el) return
+  isProgrammaticScroll.current = true
+  const yOffset = -140
+  const y = el.getBoundingClientRect().top + window.scrollY + yOffset
+  window.scrollTo({ top: y, behavior: "smooth" })
+
+  if (scrollResetTimerRef.current) clearTimeout(scrollResetTimerRef.current)
+  scrollResetTimerRef.current = setTimeout(() => {
+    isProgrammaticScroll.current = false
+    scrollResetTimerRef.current = undefined
+  }, 1000)
 }
