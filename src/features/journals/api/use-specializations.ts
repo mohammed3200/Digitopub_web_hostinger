@@ -5,6 +5,7 @@ import type {
   SpecializationItem,
   SpecializationSyncStatus,
 } from "../schemas/specialization-schema"
+import type { CustomDetail } from "../custom-details"
 
 interface ApiEnvelope<T> {
   success: boolean
@@ -87,6 +88,7 @@ export interface JournalSpecializationDetail {
   ojs_id: string | null
   ojs_path: string | null
   invitation_scope: string | null
+  custom_details: CustomDetail[]
   sync: SpecializationSyncStatus
 }
 
@@ -224,6 +226,22 @@ export function useUpdateInvitationScope() {
     },
     onSuccess: () => {
       toast.success("Invitation text saved")
+      invalidateAll(queryClient)
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+}
+
+/** Saves the custom fields shown in the public Journal Details card (#281); [] clears them. */
+export function useUpdateCustomDetails() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ journalId, details }: { journalId: string; details: CustomDetail[] }): Promise<unknown> => {
+      const res = await client.journals[":id"].$patch({ param: { id: journalId }, json: { custom_details: details } })
+      return (await unwrap<unknown>(res, "Failed to save the custom fields")).data
+    },
+    onSuccess: () => {
+      toast.success("Journal details saved")
       invalidateAll(queryClient)
     },
     onError: (error: Error) => toast.error(error.message),

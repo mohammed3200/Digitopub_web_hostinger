@@ -21,6 +21,8 @@ export interface Journal {
   ojs_path: string | null
   aims_and_scope: string | null
   author_guidelines: string | null
+  /** #281: raw JSON from the DB; read it through parseCustomDetails(). */
+  custom_details?: unknown
 }
 
 export interface JournalResponse {

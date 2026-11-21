@@ -268,6 +268,53 @@ describe('API Integration Tests', () => {
                 expect(res.status).toBe(200)
             })
         })
+
+        // #281: manager-defined custom fields for the Journal Details card.
+        describe('PATCH /journals/:id custom_details', () => {
+            const patch = (body: unknown) => app.request('/api/journals/1', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            })
+            const details = [
+                { label: 'Indexed in', value: 'Scopus' },
+                { label: 'Website', value: 'https://example.org' },
+            ]
+
+            it('rejects unauthenticated updates', async () => {
+                const res = await patch({ custom_details: details })
+                expect(res.status).toBe(401)
+                expect(prisma.journal.update).not.toHaveBeenCalled()
+            })
+
+            it('rejects non-admin roles', async () => {
+                mockSession = { id: '1', email: 'editor@test.com', role: 'editor' }
+                const res = await patch({ custom_details: details })
+                expect(res.status).toBe(403)
+                expect(prisma.journal.update).not.toHaveBeenCalled()
+            })
+
+            it('saves the ordered list as admin', async () => {
+                mockSession = { id: '1', email: 'admin@test.com', role: 'admin' }
+                vi.mocked(prisma.journal.findUnique).mockResolvedValue({ id: BigInt(1) } as any)
+                vi.mocked(prisma.journal.update).mockResolvedValue({ id: BigInt(1), custom_details: details } as any)
+
+                const res = await patch({ custom_details: [{ label: ' Indexed in ', value: 'Scopus ' }, details[1]] })
+                expect(res.status).toBe(200)
+                expect(prisma.journal.update).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { id: BigInt(1) },
+                    data: { custom_details: details },
+                }))
+                expect((await res.json()).data.custom_details).toEqual(details)
+            })
+
+            it('rejects more than 20 fields without writing', async () => {
+                mockSession = { id: '1', email: 'admin@test.com', role: 'admin' }
+                const res = await patch({ custom_details: Array(21).fill({ label: 'L', value: 'V' }) })
+                expect(res.status).toBe(400)
+                expect(prisma.journal.update).not.toHaveBeenCalled()
+            })
+        })
     })
 
     // ═══════════════════════════════════════

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { customDetailsSchema } from "../custom-details"
 
 const journalBaseSchema = z.object({
   title: z.string().min(1, "Title is required").max(500),
@@ -17,10 +18,12 @@ const journalBaseSchema = z.object({
   status: z.enum(["active", "inactive", "suspended"]),
   // #231: scope sentence for the journal's alert invitation; blank clears it.
   invitation_scope: z.string().trim().max(500).transform((v) => v || null).optional().nullable(),
+  // #281: custom label/value pairs for the public Journal Details card; [] clears them.
+  custom_details: customDetailsSchema.optional(),
 })
 
-// invitation_scope is set on the edit page only (#231), so create does not accept it.
-export const journalCreateSchema = journalBaseSchema.omit({ invitation_scope: true }).extend({
+// invitation_scope (#231) and custom_details (#281) are set on the edit page only, so create does not accept them.
+export const journalCreateSchema = journalBaseSchema.omit({ invitation_scope: true, custom_details: true }).extend({
   submission_fee: journalBaseSchema.shape.submission_fee.optional().default(0),
   publication_fee: journalBaseSchema.shape.publication_fee.optional().default(0),
   status: journalBaseSchema.shape.status.optional().default("active"),

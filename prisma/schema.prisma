@@ -64,6 +64,8 @@ model Journal {
   last_synced_at     DateTime?
   /// #231: one-sentence description used in this journal's alert invitation ("an international, peer-reviewed … journal dedicated to …"). digitopub-owned; the OJS sync never writes it.
   invitation_scope   String?            @db.VarChar(500)
+  /// #281: manager-defined [{label, value}] pairs shown after the built-in fields in the public "Journal Details" card. digitopub-owned; the OJS sync never writes it.
+  custom_details     Json?
   creator            AdminUser?         @relation("CreatedBy", fields: [created_by], references: [id])
   published_articles PublishedArticle[]
   submissions        Submission[]
