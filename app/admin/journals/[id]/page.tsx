@@ -18,6 +18,7 @@ import {
   useUpdateInvitationScope,
 } from "@/src/features/journals/api/use-specializations"
 import type { SpecializationSyncStatus } from "@/src/features/journals/schemas/specialization-schema"
+import { CustomDetailsCard } from "@/src/features/journals/components/custom-details-card"
 
 function formatDateTime(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : "—"
@@ -261,6 +262,8 @@ export default function EditJournalPage() {
           </CardContent>
         </Card>
       )}
+
+      {journal && <CustomDetailsCard journalId={journal.journal_id} saved={journal.custom_details ?? []} />}
     </div>
   )
 }

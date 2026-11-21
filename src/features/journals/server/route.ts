@@ -179,6 +179,7 @@ const DETAIL_JOURNAL_SELECT = {
   ...LIST_JOURNAL_SELECT,
   aims_and_scope: true,
   author_guidelines: true,
+  custom_details: true,
 } as const
 
 // ─── GET /journals/debug-covers (TEMPORARY FOR OJS SCHEMA) ──────────
@@ -318,6 +319,7 @@ app.get("/:id", zValidator("param", journalSlugParamSchema), async (c) => {
           ojs_path: resolved.ojsPath ?? null,
           aims_and_scope: null,
           author_guidelines: null,
+          custom_details: [],
           contact_email: undefined,
           primary_locale: "en_US",
           theme_config: null,
