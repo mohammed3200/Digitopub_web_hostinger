@@ -63,7 +63,7 @@
         "embla-carousel-react": "^8.6.0",
         "framer-motion": "^12.36.0",
         "gsap": "3.14.2",
-        "hono": "^4.13.1",
+        "hono": "4.13.18",
         "input-otp": "^1.4.2",
         "jose": "^5.9.6",
         "lucide-react": "^0.577.0",
@@ -1261,7 +1261,7 @@
 
     "hermes-parser": ["hermes-parser@0.25.1", "", { "dependencies": { "hermes-estree": "0.25.1" } }, ""],
 
-    "hono": ["hono@4.13.1", "", {}, "sha512-kdJoFVv2xmayw6cY09H7AbMJMt8Jn5jdlEdXsP7AGBdF2DIptVlKlOLKXP41yPip4/a3yQPv9gVcJYI8YY04dw=="],
+    "hono": ["hono@4.13.18", "", {}, "sha512-H9q/E1XizaWstJxUW881dmLxEj+t/TrGGnyxINkm4+sK0qUwsMtFdo2BWI9Vs3cIS19MU6b6iCijoUoEf4f3DA=="],
 
     "html-escaper": ["html-escaper@2.0.2", "", {}, ""],
 
