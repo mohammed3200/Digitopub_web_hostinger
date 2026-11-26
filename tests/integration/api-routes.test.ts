@@ -168,6 +168,30 @@ describe('API Integration Tests', () => {
                 expect(body.data).not.toHaveProperty('invitation_scope')
             })
 
+            // #288: custom detail values are rendered as HTML, so the public read sanitizes them.
+            it('returns sanitized custom_details and converts legacy plain-text rows', async () => {
+                const mockJournal = {
+                    id: BigInt(1), title: 'Test', field: 'CS', status: 'active',
+                    created_at: new Date(), updated_at: new Date(), created_by: BigInt(1),
+                    custom_details: JSON.stringify([
+                        { label: 'Office', html: '<p onclick="x">Editor<img src=x onerror=alert(1)></p><script>alert(1)</script>' },
+                        { label: 'Legacy', value: 'a < b' },
+                        { label: 'Gone', html: '<p><script>alert(1)</script></p>' },
+                    ]),
+                }
+                vi.mocked(prisma.journal.findFirst).mockResolvedValue(null)
+                vi.mocked(prisma.journal.findUnique)
+                    .mockResolvedValueOnce(null)
+                    .mockResolvedValueOnce(mockJournal as any)
+
+                const res = await app.request('/api/journals/1')
+                expect(res.status).toBe(200)
+                expect((await res.json()).data.custom_details).toEqual([
+                    { label: 'Office', html: '<p>Editor</p>' },
+                    { label: 'Legacy', html: '<p>a &lt; b</p>' },
+                ])
+            })
+
             it('should accept slug-based identifiers (any string)', async () => {
                 // Slug-based routing: the API now accepts any string (ojs_path, ojs_id, or numeric id)
                 vi.mocked(prisma.journal.findFirst).mockResolvedValue(null)
@@ -269,7 +293,7 @@ describe('API Integration Tests', () => {
             })
         })
 
-        // #281: manager-defined custom fields for the Journal Details card.
+        // #281: manager-defined custom fields for the Journal Details card. #288: values are sanitized HTML.
         describe('PATCH /journals/:id custom_details', () => {
             const patch = (body: unknown) => app.request('/api/journals/1', {
                 method: 'PATCH',
@@ -277,9 +301,13 @@ describe('API Integration Tests', () => {
                 body: JSON.stringify(body),
             })
             const details = [
-                { label: 'Indexed in', value: 'Scopus' },
-                { label: 'Website', value: 'https://example.org' },
+                { label: 'Indexed in', html: '<p>Scopus</p>' },
+                { label: 'Website', html: '<p><a href="https://example.org" target="_blank" rel="noopener noreferrer">Example</a></p>' },
             ]
+            const asAdmin = () => {
+                mockSession = { id: '1', email: 'admin@test.com', role: 'admin' }
+                vi.mocked(prisma.journal.findUnique).mockResolvedValue({ id: BigInt(1) } as any)
+            }
 
             it('rejects unauthenticated updates', async () => {
                 const res = await patch({ custom_details: details })
@@ -295,11 +323,10 @@ describe('API Integration Tests', () => {
             })
 
             it('saves the ordered list as admin', async () => {
-                mockSession = { id: '1', email: 'admin@test.com', role: 'admin' }
-                vi.mocked(prisma.journal.findUnique).mockResolvedValue({ id: BigInt(1) } as any)
+                asAdmin()
                 vi.mocked(prisma.journal.update).mockResolvedValue({ id: BigInt(1), custom_details: details } as any)
 
-                const res = await patch({ custom_details: [{ label: ' Indexed in ', value: 'Scopus ' }, details[1]] })
+                const res = await patch({ custom_details: [{ label: ' Indexed in ', html: '<p>Scopus</p> ' }, details[1]] })
                 expect(res.status).toBe(200)
                 expect(prisma.journal.update).toHaveBeenCalledWith(expect.objectContaining({
                     where: { id: BigInt(1) },
@@ -308,9 +335,44 @@ describe('API Integration Tests', () => {
                 expect((await res.json()).data.custom_details).toEqual(details)
             })
 
-            it('rejects more than 20 fields without writing', async () => {
-                mockSession = { id: '1', email: 'admin@test.com', role: 'admin' }
-                const res = await patch({ custom_details: Array(21).fill({ label: 'L', value: 'V' }) })
+            it('stores sanitized HTML only', async () => {
+                asAdmin()
+                vi.mocked(prisma.journal.update).mockResolvedValue({ id: BigInt(1) } as any)
+
+                const res = await patch({ custom_details: [{
+                    label: 'Office',
+                    html: '<p style="color:red" onclick="x"><b>Editor</b><img src=x onerror=alert(1)></p>'
+                        + '<p><a href="javascript:alert(1)">bad</a> <a href="mailto:office@example.org">mail</a></p>',
+                }] })
+                expect(res.status).toBe(200)
+                expect(prisma.journal.update).toHaveBeenCalledWith(expect.objectContaining({
+                    data: { custom_details: [{
+                        label: 'Office',
+                        html: '<p><strong>Editor</strong></p>'
+                            + '<p>bad <a href="mailto:office@example.org" target="_blank" rel="noopener noreferrer">mail</a></p>',
+                    }] },
+                }))
+            })
+
+            it('rejects a value with no text left after sanitizing, without writing', async () => {
+                asAdmin()
+                // Passes the schema (the script body counts as text) but is empty once cleaned.
+                const res = await patch({ custom_details: [
+                    { label: 'Kept', html: '<p>ok</p>' },
+                    { label: 'Empty', html: '<p><script>alert(1)</script></p>' },
+                ] })
+                expect(res.status).toBe(400)
+                expect(prisma.journal.update).not.toHaveBeenCalled()
+            })
+
+            it.each([
+                ['more than 20 fields', Array(21).fill({ label: 'L', html: '<p>V</p>' })],
+                ['visible text over 500 characters', [{ label: 'L', html: `<p>${'a'.repeat(501)}</p>` }]],
+                ['raw html over 4000 characters', [{ label: 'L', html: '<p><strong>a</strong></p>'.repeat(170) }]],
+                ['the legacy {label, value} shape', [{ label: 'L', value: 'V' }]],
+            ])('rejects %s without writing', async (_name, body) => {
+                asAdmin()
+                const res = await patch({ custom_details: body })
                 expect(res.status).toBe(400)
                 expect(prisma.journal.update).not.toHaveBeenCalled()
             })

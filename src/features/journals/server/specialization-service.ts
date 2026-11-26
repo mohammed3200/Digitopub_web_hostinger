@@ -1,6 +1,7 @@
 import { prisma } from "@/src/lib/db/config"
 import { withDeadlockRetry } from "@/src/lib/db/deadlock-retry"
 import { parseCustomDetails } from "../custom-details"
+import { sanitizeCustomDetails } from "./custom-details-html"
 import {
   JOB_SET_JOURNAL_SPECIALIZATION,
   enqueueSyncJob,
@@ -182,7 +183,8 @@ export async function getJournalSpecialization(journalId: bigint) {
     ojs_id: journal.ojs_id,
     ojs_path: journal.ojs_path,
     invitation_scope: journal.invitation_scope,
-    custom_details: parseCustomDetails(journal.custom_details),
+    // #288: the editor loads sanitized HTML; legacy plain-text rows arrive converted.
+    custom_details: sanitizeCustomDetails(parseCustomDetails(journal.custom_details)),
     sync: await getJournalSyncStatus(journal.id, journal.ojs_id),
   }
 }

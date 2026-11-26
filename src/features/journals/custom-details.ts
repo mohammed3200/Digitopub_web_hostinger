@@ -1,44 +1,90 @@
 import { z } from "zod"
 
 /**
- * #281: manager-defined label/value pairs shown after the built-in fields
- * (ISSN, Publisher, Frequency) in the public "Journal Details" card.
+ * #281: manager-defined fields shown after the built-in fields (ISSN, Publisher,
+ * Frequency) in the public "Journal Details" card. #288: values are rich text.
  * Stored in `journals.custom_details` as an ordered JSON array; the OJS sync never writes it.
+ *
+ * Rows are `{label, html}`. `html` is sanitized on the server on write and on read
+ * (`server/custom-details-html.ts`); nothing in this client-safe module sanitizes.
+ * Legacy #281 rows `{label, value}` hold plain text and are converted on read.
  */
 export interface CustomDetail {
   label: string
-  value: string
+  html: string
 }
 
 export const MAX_CUSTOM_DETAILS = 20
 export const CUSTOM_DETAIL_LABEL_MAX = 80
-export const CUSTOM_DETAIL_VALUE_MAX = 500
+/** Visible characters of a value (markup not counted). */
+export const CUSTOM_DETAIL_TEXT_MAX = 500
+/** Raw HTML length of a value, bounding the payload. */
+export const CUSTOM_DETAIL_HTML_MAX = 4000
+
+/**
+ * Counts the characters a reader sees: tags removed, each entity counted once,
+ * surrounding whitespace ignored. Used for length limits only, never for safety.
+ */
+export function htmlTextLength(html: string): number {
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, "x")
+    .trim().length
+}
 
 const draftRowSchema = z.object({
   label: z.string().trim().max(CUSTOM_DETAIL_LABEL_MAX, `Labels are at most ${CUSTOM_DETAIL_LABEL_MAX} characters`),
-  value: z.string().trim().max(CUSTOM_DETAIL_VALUE_MAX, `Values are at most ${CUSTOM_DETAIL_VALUE_MAX} characters`),
+  html: z.string().trim().max(CUSTOM_DETAIL_HTML_MAX, "This value has too much formatting; shorten it"),
 })
 
 const savedRowSchema = z.object({
   label: z.string().min(1, "Each field needs a label"),
-  value: z.string().min(1, "Each field needs a value"),
+  html: z
+    .string()
+    .refine((html) => htmlTextLength(html) > 0, "Each field needs a value")
+    .refine(
+      (html) => htmlTextLength(html) <= CUSTOM_DETAIL_TEXT_MAX,
+      `Values are at most ${CUSTOM_DETAIL_TEXT_MAX} characters`,
+    ),
 })
 
 /**
- * Validates the list an admin saves. Rows left completely empty are dropped
- * (an unused "Add field" row is not an error); half-filled rows are rejected.
+ * Validates the list an admin saves. Rows left completely empty (no label, and an
+ * empty editor such as "<p></p>") are dropped; half-filled rows are rejected.
  * The raw cap bounds the payload before the empty-row filter runs.
  */
 export const customDetailsSchema = z
   .array(draftRowSchema)
   .max(MAX_CUSTOM_DETAILS * 5)
-  .transform((rows) => rows.filter((row) => row.label !== "" || row.value !== ""))
+  .transform((rows) => rows.filter((row) => row.label !== "" || htmlTextLength(row.html) > 0))
   .pipe(z.array(savedRowSchema).max(MAX_CUSTOM_DETAILS, `At most ${MAX_CUSTOM_DETAILS} custom fields`))
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
 /**
- * Reads the stored JSON defensively for display: never throws, drops malformed
- * entries, keeps order. The column is admin-written, but a bad row must not
- * break the public journal page.
+ * Converts a legacy #281 plain-text value to HTML: escaped, line breaks kept, and
+ * a whole-value http(s) URL linked (the #281 behaviour).
+ */
+export function plainTextToHtml(value: string): string {
+  const v = value.trim()
+  const href = toSafeHref(v)
+  if (href) {
+    return `<p><a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(v)}</a></p>`
+  }
+  return `<p>${escapeHtml(v).replace(/\r?\n/g, "<br>")}</p>`
+}
+
+/**
+ * Reads the stored JSON defensively: never throws, drops malformed or empty
+ * entries, keeps order, converts legacy rows. Does NOT sanitize: server callers
+ * pass the result through `sanitizeCustomDetails`.
  */
 export function parseCustomDetails(raw: unknown): CustomDetail[] {
   // Production is MariaDB, where JSON is LONGTEXT; tolerate a driver returning the raw text.
@@ -53,11 +99,13 @@ export function parseCustomDetails(raw: unknown): CustomDetail[] {
   const out: CustomDetail[] = []
   for (const entry of raw) {
     if (!entry || typeof entry !== "object") continue
-    const { label, value } = entry as Record<string, unknown>
-    if (typeof label !== "string" || typeof value !== "string") continue
+    const { label, html, value } = entry as Record<string, unknown>
+    if (typeof label !== "string") continue
     const l = label.trim()
-    const v = value.trim()
-    if (l && v) out.push({ label: l, value: v })
+    let h: string | null = null
+    if (typeof html === "string") h = html.trim()
+    else if (typeof value === "string" && value.trim()) h = plainTextToHtml(value)
+    if (l && h && htmlTextLength(h) > 0) out.push({ label: l, html: h })
   }
   return out.slice(0, MAX_CUSTOM_DETAILS)
 }
