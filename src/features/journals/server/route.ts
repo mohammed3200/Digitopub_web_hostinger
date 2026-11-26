@@ -12,6 +12,8 @@ import { hostingRequestRouter } from "./hosting-request-route"
 import { specializationRouter } from "./specialization-route"
 import { SpecializationError, requireActiveSpecialization } from "./specialization-service"
 import { resolveJournalRecord } from "./resolve-journal"
+import { parseCustomDetails } from "../custom-details"
+import { sanitizeCustomDetails } from "./custom-details-html"
 
 const app = new Hono()
 
@@ -341,7 +343,11 @@ app.get("/:id", zValidator("param", journalSlugParamSchema), async (c) => {
 
     // invitation_scope is admin-only email copy (#231); the record here is unselected.
     const { invitation_scope: _invitationScope, ...publicJournal } = journal
-    const serializedJournal = serializeRecord(publicJournal) as ReturnType<typeof serializeRecord> & { contact_email?: string; cover_image_url?: string | null }
+    // #288: custom detail values are rendered as HTML by the public card; clean them on every read.
+    const serializedJournal = serializeRecord({
+      ...publicJournal,
+      custom_details: sanitizeCustomDetails(parseCustomDetails(publicJournal.custom_details)),
+    }) as ReturnType<typeof serializeRecord> & { contact_email?: string; cover_image_url?: string | null }
     serializedJournal.cover_image_url = normalizeOjsAssetUrl(serializedJournal.cover_image_url)
 
     if (journal.ojs_id) {
@@ -877,6 +883,15 @@ app.patch("/:id", requireAdmin, zValidator("param", journalIdParamSchema), zVali
       if (value !== undefined) {
         updateData[key] = value
       }
+    }
+
+    // #288: store only sanitized HTML. A value with no text left after cleaning is an error, not a silent drop.
+    if (data.custom_details) {
+      const clean = sanitizeCustomDetails(data.custom_details)
+      if (clean.length !== data.custom_details.length) {
+        return c.json({ success: false, error: "Each field needs a value" }, 400)
+      }
+      updateData.custom_details = clean
     }
 
     const journal = await prisma.journal.update({
