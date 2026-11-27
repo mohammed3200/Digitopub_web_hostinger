@@ -354,6 +354,18 @@ describe('API Integration Tests', () => {
                 }))
             })
 
+            // #290: values have no practical length limit.
+            it('saves a long value', async () => {
+                asAdmin()
+                vi.mocked(prisma.journal.update).mockResolvedValue({ id: BigInt(1) } as any)
+                const html = `<p>${'a'.repeat(5000)}</p>`
+                const res = await patch({ custom_details: [{ label: 'Long', html }] })
+                expect(res.status).toBe(200)
+                expect(prisma.journal.update).toHaveBeenCalledWith(expect.objectContaining({
+                    data: { custom_details: [{ label: 'Long', html }] },
+                }))
+            })
+
             it('rejects a value with no text left after sanitizing, without writing', async () => {
                 asAdmin()
                 // Passes the schema (the script body counts as text) but is empty once cleaned.
@@ -367,8 +379,7 @@ describe('API Integration Tests', () => {
 
             it.each([
                 ['more than 20 fields', Array(21).fill({ label: 'L', html: '<p>V</p>' })],
-                ['visible text over 500 characters', [{ label: 'L', html: `<p>${'a'.repeat(501)}</p>` }]],
-                ['raw html over 4000 characters', [{ label: 'L', html: '<p><strong>a</strong></p>'.repeat(170) }]],
+                ['html over the 100000-character safety ceiling', [{ label: 'L', html: `<p>${'a'.repeat(100_000)}</p>` }]],
                 ['the legacy {label, value} shape', [{ label: 'L', value: 'V' }]],
             ])('rejects %s without writing', async (_name, body) => {
                 asAdmin()

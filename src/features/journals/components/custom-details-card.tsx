@@ -9,7 +9,6 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   CUSTOM_DETAIL_LABEL_MAX,
-  CUSTOM_DETAIL_TEXT_MAX,
   MAX_CUSTOM_DETAILS,
   customDetailsSchema,
   type CustomDetail,
@@ -135,8 +134,7 @@ export function CustomDetailsCard({ journalId, saved }: { journalId: string; sav
           )}
         </div>
         <p className="text-sm text-muted-foreground">
-          Up to {MAX_CUSTOM_DETAILS} fields, {CUSTOM_DETAIL_TEXT_MAX} characters of text each. Empty rows are ignored
-          when saving.
+          Up to {MAX_CUSTOM_DETAILS} fields. Empty rows are ignored when saving.
         </p>
       </CardContent>
     </Card>
