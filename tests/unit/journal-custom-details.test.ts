@@ -6,6 +6,7 @@ import {
     htmlTextLength,
     toSafeHref,
     MAX_CUSTOM_DETAILS,
+    CUSTOM_DETAIL_HTML_MAX,
 } from '@/src/features/journals/custom-details'
 import { journalCreateSchema, journalUpdateSchema } from '@/src/features/journals/schemas/journal-schema'
 
@@ -46,15 +47,17 @@ describe('journal custom details (#281, #288)', () => {
             expect(customDetailsSchema.safeParse([{ label: 'a'.repeat(80), html: '<p>x</p>' }]).success).toBe(true)
         })
 
-        it('limits values to 500 characters of visible text, not of markup', () => {
-            const text500 = `<p><strong>${'a'.repeat(250)}</strong></p><ul><li>${'b'.repeat(250)}</li></ul>`
-            expect(customDetailsSchema.safeParse([{ label: 'x', html: text500 }]).success).toBe(true)
-            expect(customDetailsSchema.safeParse([{ label: 'x', html: `<p>${'a'.repeat(501)}</p>` }]).success).toBe(false)
+        // #290: no practical limit on value length.
+        it('accepts long values (no visible-text limit)', () => {
+            const long = `<p>${'a'.repeat(5000)}</p><ul>${'<li>item</li>'.repeat(200)}</ul>`
+            expect(customDetailsSchema.safeParse([{ label: 'x', html: long }]).success).toBe(true)
         })
 
-        it('limits the raw html to 4000 characters', () => {
-            const heavy = '<p><strong>a</strong></p>'.repeat(170) // 170 visible chars, 4250 raw
-            expect(customDetailsSchema.safeParse([{ label: 'x', html: heavy }]).success).toBe(false)
+        it(`keeps a hidden safety ceiling of ${CUSTOM_DETAIL_HTML_MAX} html characters`, () => {
+            const atCap = `<p>${'a'.repeat(CUSTOM_DETAIL_HTML_MAX - 7)}</p>`
+            expect(atCap).toHaveLength(CUSTOM_DETAIL_HTML_MAX)
+            expect(customDetailsSchema.safeParse([{ label: 'x', html: atCap }]).success).toBe(true)
+            expect(customDetailsSchema.safeParse([{ label: 'x', html: `${atCap} ` + 'a' }]).success).toBe(false)
         })
 
         it(`rejects more than ${MAX_CUSTOM_DETAILS} fields`, () => {

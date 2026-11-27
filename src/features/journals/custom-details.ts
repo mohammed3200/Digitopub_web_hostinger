@@ -16,14 +16,16 @@ export interface CustomDetail {
 
 export const MAX_CUSTOM_DETAILS = 20
 export const CUSTOM_DETAIL_LABEL_MAX = 80
-/** Visible characters of a value (markup not counted). */
-export const CUSTOM_DETAIL_TEXT_MAX = 500
-/** Raw HTML length of a value, bounding the payload. */
-export const CUSTOM_DETAIL_HTML_MAX = 4000
+/**
+ * #290: values have no editorial length limit. This raw-HTML ceiling (roughly
+ * 15-20 pages of text) only stops an accidental huge paste from bloating the
+ * row and every load of the journal page.
+ */
+export const CUSTOM_DETAIL_HTML_MAX = 100_000
 
 /**
  * Counts the characters a reader sees: tags removed, each entity counted once,
- * surrounding whitespace ignored. Used for length limits only, never for safety.
+ * surrounding whitespace ignored. Used to detect empty values, never for safety.
  */
 export function htmlTextLength(html: string): number {
   return html
@@ -34,18 +36,12 @@ export function htmlTextLength(html: string): number {
 
 const draftRowSchema = z.object({
   label: z.string().trim().max(CUSTOM_DETAIL_LABEL_MAX, `Labels are at most ${CUSTOM_DETAIL_LABEL_MAX} characters`),
-  html: z.string().trim().max(CUSTOM_DETAIL_HTML_MAX, "This value has too much formatting; shorten it"),
+  html: z.string().trim().max(CUSTOM_DETAIL_HTML_MAX, "This value is too long"),
 })
 
 const savedRowSchema = z.object({
   label: z.string().min(1, "Each field needs a label"),
-  html: z
-    .string()
-    .refine((html) => htmlTextLength(html) > 0, "Each field needs a value")
-    .refine(
-      (html) => htmlTextLength(html) <= CUSTOM_DETAIL_TEXT_MAX,
-      `Values are at most ${CUSTOM_DETAIL_TEXT_MAX} characters`,
-    ),
+  html: z.string().refine((html) => htmlTextLength(html) > 0, "Each field needs a value"),
 })
 
 /**
